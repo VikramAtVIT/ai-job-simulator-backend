@@ -50,7 +50,7 @@ app.get('/signup.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'signup.html'));
 });
 
-app.post('/api/login', (req, res) => {
+app.post(['/api/login', '/api/auth/login'], (req, res) => {
   const { email, password } = req.body;
   
   if (email === 'demo@codeapex.com' && password === 'demo123') {
@@ -58,30 +58,44 @@ app.post('/api/login', (req, res) => {
       success: true,
       userId: 'user123',
       email: email,
+      user: {
+        id: 'user123',
+        email: email,
+        name: 'Demo User'
+      },
       token: 'demo-token-12345'
     });
   } else {
     res.status(401).json({
       success: false,
+      error: 'Invalid credentials. Try: demo@codeapex.com / demo123',
       message: 'Invalid credentials. Try: demo@codeapex.com / demo123'
     });
   }
 });
 
-app.post('/api/signup', (req, res) => {
+app.post(['/api/signup', '/api/auth/signup'], (req, res) => {
   const { email, password, name } = req.body;
   
   if (!email || !password || !name) {
     return res.status(400).json({
       success: false,
+      error: 'All fields required',
       message: 'All fields required'
     });
   }
   
+  const userId = 'user_' + Date.now();
+
   res.json({
     success: true,
-    userId: 'user_' + Date.now(),
+    userId: userId,
     email: email,
+    user: {
+      id: userId,
+      email: email,
+      name: name
+    },
     token: 'token_' + Date.now()
   });
 });

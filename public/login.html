@@ -431,12 +431,24 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password })
             })
-                .then(response => response.json().then(data => ({ ok: response.ok, data })))
+                .then(async response => {
+                    const contentType = response.headers.get('content-type') || '';
+                    const data = contentType.includes('application/json')
+                        ? await response.json()
+                        : { error: 'The server returned an unexpected response. Please restart the backend.' };
+                    return { ok: response.ok, data };
+                })
                 .then(({ ok, data }) => {
-                    if (!ok) throw new Error(data.error || 'Login failed');
+                    if (!ok || !data.success || !data.token) {
+                        throw new Error(data.error || data.message || 'Login failed');
+                    }
+                    const user = data.user || {
+                        email: data.email || email,
+                        name: data.name || email.split('@')[0]
+                    };
                     localStorage.setItem('authToken', data.token);
-                    localStorage.setItem('userEmail', data.user.email);
-                    localStorage.setItem('userName', data.user.name);
+                    localStorage.setItem('userEmail', user.email);
+                    localStorage.setItem('userName', user.name);
                     if (remember) localStorage.setItem('rememberMe', 'true');
                     else localStorage.removeItem('rememberMe');
                     showSuccess('Login successful! Redirecting...');

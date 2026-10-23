@@ -330,12 +330,24 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: fullname, email, password })
             })
-                .then(response => response.json().then(data => ({ ok: response.ok, data })))
+                .then(async response => {
+                    const contentType = response.headers.get('content-type') || '';
+                    const data = contentType.includes('application/json')
+                        ? await response.json()
+                        : { error: 'The server returned an unexpected response. Please restart the backend.' };
+                    return { ok: response.ok, data };
+                })
                 .then(({ ok, data }) => {
-                    if (!ok) throw new Error(data.error || 'Signup failed');
+                    if (!ok || !data.success || !data.token) {
+                        throw new Error(data.error || data.message || 'Signup failed');
+                    }
+                    const user = data.user || {
+                        email: data.email || email,
+                        name: data.name || fullname
+                    };
                     localStorage.setItem('authToken', data.token);
-                    localStorage.setItem('userEmail', data.user.email);
-                    localStorage.setItem('userName', data.user.name);
+                    localStorage.setItem('userEmail', user.email);
+                    localStorage.setItem('userName', user.name);
                     window.location.href = 'index.html';
                 })
                 .catch(error => showError(error.message));
