@@ -1,0 +1,418 @@
+// ============ ENVIRONMENT & DEPENDENCIES ============
+require('dotenv').config();
+
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const cors = require('cors');
+const GroqService = require('./groqService');
+
+// ============ INITIALIZATION ============
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
+const groqService = new GroqService();
+const activeSessions = new Map();
+
+// ============ MIDDLEWARE ============
+app.use(cors());
+app.use(express.json());
+app.use(express.static(__dirname));
+app.use('/pages', express.static(__dirname + '/pages'));
+
+// ============ HTTP ROUTES ============
+
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/login.html');
+});
+
+app.get('/login.html', (req, res) => {
+  res.sendFile(__dirname + '/login.html');
+});
+
+app.get('/signup.html', (req, res) => {
+  res.sendFile(__dirname + '/signup.html');
+});
+
+app.get('/index.html', (req, res) => {
+  res.sendFile(__dirname + '/index.html');
+});
+
+app.get('/pages/:page', (req, res) => {
+  const page = req.params.page;
+  const filePath = __dirname + `/pages/${page}.html`;
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      res.status(404).send('Page not found');
+    }
+  });
+});
+
+// ============ AUTH ROUTES ============
+
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body;
+
+  if (email === 'demo@codeapex.com' && password === 'demo123') {
+    const token = 'mock-token-' + Date.now();
+    const user = {
+      id: 'user-' + Date.now(),
+      email: email,
+      name: 'Demo User'
+    };
+
+    res.json({
+      success: true,
+      token: token,
+      user: user
+    });
+  } else {
+    res.status(401).json({
+      success: false,
+      message: 'Invalid credentials. Use demo@codeapex.com / demo123'
+    });
+  }
+});
+
+app.post('/api/auth/signup', (req, res) => {
+  const { email, password, name } = req.body;
+
+  if (!email || !password || password.length < 6) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid input'
+    });
+  }
+
+  const token = 'mock-token-' + Date.now();
+  const user = {
+    id: 'user-' + Date.now(),
+    email: email,
+    name: name || 'User'
+  };
+
+  res.json({
+    success: true,
+    token: token,
+    user: user
+  });
+});
+
+// ============ DEBUG ROUTE ============
+
+app.get('/api/test-groq', async (req, res) => {
+  try {
+    console.log('Testing Groq connection...');
+    console.log('GROQ_API_KEY exists:', !!process.env.GROQ_API_KEY);
+    
+    if (!process.env.GROQ_API_KEY) {
+      return res.json({
+        success: false,
+        error: 'GROQ_API_KEY is undefined',
+        keyLoaded: false
+      });
+    }
+
+    const response = await groqService.generateResponse(
+      'Say hello in one sentence',
+      'manager_review',
+      'test-user'
+    );
+
+    res.json({
+      success: true,
+      message: 'Groq API is working!',
+      aiResponse: response.message,
+      keyLoaded: true
+    });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      keyLoaded: !!process.env.GROQ_API_KEY
+    });
+  }
+});
+
+// ============ SOCKET.IO EVENTS ============
+
+io.on('connection', (socket) => {
+  console.log('🔌 Client connected:', socket.id);
+
+  let userId = null;
+  let currentScenarioType = null;
+
+  // ========== CONNECTION ==========
+  socket.on('connect', (data) => {
+    userId = data.userId || socket.id;
+    activeSessions.set(userId, {
+      socketId: socket.id,
+      connectedAt: new Date(),
+      scenarioType: null,
+      messageCount: 0
+    });
+    console.log(`✅ User ${userId} authenticated`);
+  });
+
+  // ========== SCENARIO SELECTION ==========
+  socket.on('selectScenario', async (data) => {
+    const { scenarioType } = data;
+    userId = data.userId || userId;
+    currentScenarioType = scenarioType;
+
+    if (activeSessions.has(userId)) {
+      activeSessions.get(userId).scenarioType = scenarioType;
+    }
+
+    groqService.clearHistory(userId);
+
+    const scenarioData = {
+      manager_review: {
+        intro: "Manager Performance Review - Discuss your recent work and career growth with your manager.",
+        aiInitialMessage: "Thanks for meeting with me today. I'd like to discuss your performance over the past quarter and your goals going forward. How do you feel things have been going on your current project?"
+      },
+      client_requirement: {
+        intro: "Client Requirement Discussion - Handle a client's complex requirements and concerns.",
+        aiInitialMessage: "Thanks for taking the time to meet. We have some specific requirements for this project, and I want to make sure we're on the same page. Can you walk me through your understanding of what we need?"
+      },
+      production_incident: {
+        intro: "Production Incident Response - Debug a critical production issue affecting customers.",
+        aiInitialMessage: "We have a critical issue in production affecting about 15% of our users. The service started returning errors 20 minutes ago. What's your first step in diagnosing this?"
+      },
+      difficult_colleague: {
+        intro: "Difficult Colleague Situation - Navigate a conflict with a colleague professionally.",
+        aiInitialMessage: "Look, I need to talk to you about what happened in the meeting yesterday. I felt like you threw me under the bus in front of the whole team. Can you help me understand what was going on?"
+      }
+    };
+
+    const scenario = scenarioData[scenarioType] || scenarioData.manager_review;
+
+    socket.emit('scenarioStarted', {
+      intro: scenario.intro,
+      aiInitialMessage: scenario.aiInitialMessage
+    });
+
+    console.log(`📋 Scenario started: ${scenarioType}`);
+  });
+
+  // ========== MESSAGING ==========
+  socket.on('message', async (data) => {
+    const { message, scenarioType } = data;
+    userId = data.userId || userId;
+    currentScenarioType = scenarioType || currentScenarioType;
+
+    console.log(`\n💬 Message from ${userId}:`);
+    console.log(`   "${message}"`);
+
+    if (activeSessions.has(userId)) {
+      activeSessions.get(userId).messageCount++;
+    }
+
+    try {
+      // Generate AI response using Groq or mock
+      const responseData = await groqService.generateResponse(
+        message,
+        currentScenarioType,
+        userId
+      );
+
+      const aiMessage = responseData.message;
+      const qualityScore = responseData.qualityScore;
+      const emotion = responseData.emotion;
+      const difficulty = responseData.difficulty;
+
+      console.log(`   AI: "${aiMessage}"`);
+      console.log(`   Quality: ${qualityScore}/10 | Emotion: ${emotion} | Difficulty: ${difficulty}\n`);
+
+      socket.emit('aiResponse', {
+        message: aiMessage,
+        qualityScore: qualityScore,
+        emotion: emotion,
+        difficulty: difficulty
+      });
+
+    } catch (error) {
+      console.error('❌ Message handler error:', error.message);
+      socket.emit('error', {
+        message: 'Error processing your message'
+      });
+    }
+  });
+
+  // ========== VOICE RECORDING ==========
+  socket.on('voice', async (data) => {
+    const { audio, scenarioType, duration } = data;
+    userId = data.userId || userId;
+    currentScenarioType = scenarioType || currentScenarioType;
+
+    console.log(`\n🎤 Voice message from ${userId} (${(duration / 1000).toFixed(1)}s)`);
+
+    try {
+      const voicePrompt = `[User sent a voice message of ${(duration / 1000).toFixed(1)} seconds]`;
+
+      const responseData = await groqService.generateResponse(
+        voicePrompt,
+        currentScenarioType,
+        userId
+      );
+
+      socket.emit('aiResponse', {
+        message: responseData.message,
+        qualityScore: responseData.qualityScore,
+        emotion: responseData.emotion,
+        difficulty: responseData.difficulty
+      });
+
+      console.log(`   AI: "${responseData.message}"\n`);
+
+    } catch (error) {
+      console.error('❌ Voice handler error:', error.message);
+      socket.emit('error', {
+        message: 'Error processing voice message'
+      });
+    }
+  });
+
+  // ========== FEEDBACK GENERATION ==========
+  socket.on('generateFeedback', async (data) => {
+    userId = data.userId || userId;
+    currentScenarioType = data.scenarioType || currentScenarioType;
+
+    console.log(`\n📊 Generating feedback for ${userId} - ${currentScenarioType}`);
+
+    try {
+      const history = groqService.getHistory(userId);
+
+      if (history.length === 0) {
+        socket.emit('feedback', {
+          score: 0,
+          rubrics: {
+            communication: 0,
+            problem_solving: 0,
+            professionalism: 0,
+            adaptability: 0
+          },
+          feedback: 'No conversation history found. Please complete the scenario first.'
+        });
+        return;
+      }
+
+      const feedbackData = await groqService.generateFeedback(
+        history,
+        currentScenarioType,
+        userId
+      );
+
+      console.log(`   Score: ${feedbackData.score}`);
+      console.log(`   Rubrics:`, feedbackData.rubrics);
+
+      socket.emit('feedback', feedbackData);
+
+      groqService.trackPerformance(userId, currentScenarioType, feedbackData.score);
+
+    } catch (error) {
+      console.error('❌ Feedback error:', error.message);
+      socket.emit('feedback', {
+        score: 50,
+        rubrics: {
+          communication: 12,
+          problem_solving: 13,
+          professionalism: 12,
+          adaptability: 12
+        },
+        feedback: 'Feedback could not be generated. Please try again.'
+      });
+    }
+  });
+
+  // ========== PERFORMANCE TRACKING ==========
+  socket.on('trackPerformance', (data) => {
+    const { scenarioType, score } = data;
+    userId = data.userId || userId;
+
+    console.log(`📈 Performance: ${userId} - ${scenarioType} - Score: ${score}`);
+
+    const difficulty = groqService.trackPerformance(userId, scenarioType, score);
+    const stats = groqService.getPerformanceStats(userId, scenarioType);
+
+    socket.emit('performanceUpdated', {
+      scenarioType: scenarioType,
+      score: score,
+      difficulty: difficulty,
+      stats: stats
+    });
+  });
+
+  // ========== JOB DESCRIPTION PARSING ==========
+  socket.on('parseJob', async (data) => {
+    const { jobDescription } = data;
+    userId = data.userId || userId;
+
+    console.log(`📋 Parsing job description...`);
+
+    try {
+      const parsed = await groqService.parseJobDescription(jobDescription);
+      socket.emit('jobParsed', {
+        success: true,
+        data: parsed
+      });
+    } catch (error) {
+      console.error('❌ Parse error:', error.message);
+      socket.emit('jobParsed', {
+        success: false,
+        message: 'Could not parse job description'
+      });
+    }
+  });
+
+  // ========== DISCONNECTION ==========
+  socket.on('disconnect', () => {
+    console.log(`🔌 User ${userId} disconnected`);
+    if (userId && activeSessions.has(userId)) {
+      activeSessions.delete(userId);
+    }
+  });
+
+  socket.on('error', (error) => {
+    console.error('⚠️ Socket error:', error);
+  });
+});
+
+// ============ ERROR HANDLING ============
+
+app.use((err, req, res, next) => {
+  console.error('❌ Express error:', err);
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error'
+  });
+});
+
+// ============ SERVER START ============
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`🚀 AI Job Simulator Server Running`);
+  console.log(`📍 http://localhost:${PORT}`);
+  console.log(`${'='.repeat(60)}\n`);
+
+  console.log('📧 Login Credentials:');
+  console.log('   Email: demo@codeapex.com');
+  console.log('   Password: demo123\n');
+
+  console.log('🧪 Test Groq API:');
+  console.log(`   http://localhost:${PORT}/api/test-groq\n`);
+
+  if (!process.env.GROQ_API_KEY) {
+    console.warn('⚠️  GROQ_API_KEY not set - using mock responses');
+    console.warn('   Add to .env: GROQ_API_KEY=gsk_your_key\n');
+  } else {
+    console.log('✅ Groq API Key loaded\n');
+  }
+});
+
+module.exports = server;
