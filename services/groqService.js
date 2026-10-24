@@ -94,12 +94,37 @@ class GroqService {
     if (normalizedEmail === 'demo@codeapex.com' && password === 'demo123') {
       return { userId: 'user123', email: normalizedEmail, name: 'Demo User' };
     }
+
     const account = this.accounts[normalizedEmail];
     if (!account || !this.verifyPassword(password, account.passwordHash)) return null;
     return {
       userId: account.userId,
       email: account.email,
       name: this.getUserProfile(account.userId).name
+    };
+  }
+
+  findOrCreateGoogleAccount(name, email) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = this.accounts[normalizedEmail];
+    if (existing) {
+      return {
+        userId: existing.userId,
+        email: existing.email,
+        name: this.getUserProfile(existing.userId).name
+      };
+    }
+
+    const account = this.createAccount(
+      name || normalizedEmail.split('@')[0],
+      normalizedEmail,
+      crypto.randomBytes(32).toString('hex')
+    );
+    if (!account) return null;
+    return {
+      userId: account.userId,
+      email: account.email,
+      name: name || normalizedEmail.split('@')[0]
     };
   }
 
