@@ -270,7 +270,7 @@ class GroqService {
       try {
         const response = await this.groq.chat.completions.create({
           model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-          max_tokens: 320,
+          max_tokens: 300,
           messages: [
             {
               role: 'system',
@@ -282,17 +282,16 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
             ...this.conversationHistory[userId]
           ]
         });
-        const rawMessage = response.choices
-          && response.choices[0]
-          && response.choices[0].message
-          && response.choices[0].message.content;
+        const rawMessage = response.choices[0] && response.choices[0].message
+          ? response.choices[0].message.content
+          : '';
         if (typeof rawMessage !== 'string' || !rawMessage.trim()) {
-          throw new Error('Groq returned an empty response');
+          throw new Error('The AI returned an empty response');
         }
         const recommendationMatch = rawMessage.match(/COACHING_NOTE:\s*(.+)$/im);
         const aiMessage = rawMessage.replace(/\s*COACHING_NOTE:\s*.+$/im, '').trim();
         if (!aiMessage) {
-          throw new Error('Groq returned an empty coaching message');
+          throw new Error('The AI returned a response without a message');
         }
         const recommendation = recommendationMatch
           ? recommendationMatch[1].trim()
