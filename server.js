@@ -21,6 +21,7 @@ try {
 
 const VoiceService = require('./services/voiceService');
 const voiceService = new VoiceService();
+const scenarioCatalog = require('./services/scenarioCatalog');
 
 app.use(express.json());
 app.use((req, res, next) => {
@@ -190,38 +191,24 @@ io.on('connection', (socket) => {
 
   socket.on('selectScenario', (data) => {
     const scenarioType = data && data.scenarioType;
-    const validScenarioTypes = [
-      'manager_review',
-      'client_requirement',
-      'production_incident',
-      'difficult_colleague',
-      'daily_standup',
-      'priority_conflict'
-    ];
-
-    if (!validScenarioTypes.includes(scenarioType)) {
+    const scenario = typeof scenarioType === 'string'
+      && Object.prototype.hasOwnProperty.call(scenarioCatalog, scenarioType)
+      ? scenarioCatalog[scenarioType]
+      : null;
+    if (!scenario) {
       socket.emit('error', 'Please select a valid scenario');
       return;
     }
-    const hardScenarios = ['production_incident', 'difficult_colleague', 'priority_conflict'];
-    if (hardScenarios.includes(scenarioType) && !groqService.getUserStats(socket.userId).hardScenariosUnlocked) {
-      socket.emit('error', 'Complete more mastered skills to unlock hard scenarios');
+    if (scenario.difficulty === 'hard' && !groqService.getUserStats(socket.userId).hardScenariosUnlocked) {
+      socket.emit('error', 'Master four scenario types to unlock hard scenarios at Advanced level.');
       return;
     }
 
     groqService.initializeScenario(socket.userId, scenarioType);
-    const scenarioIntros = {
-      manager_review: 'Welcome to your performance review. I am your manager, and we will discuss your recent achievements, challenges, and growth goals. Start by summarizing one result you are proud of and the impact it had.',
-      client_requirement: 'Welcome to the client requirements discussion. I am the client, and I need your help shaping a feature with a tight deadline. Start by asking the most important question you need answered before proposing a solution.',
-      production_incident: 'You are now leading a live production incident. Customer requests are failing and the team is waiting for your direction. Start by explaining how you would assess impact and stabilize the service safely.',
-      difficult_colleague: 'Welcome to a challenging technical discussion. I am a teammate who disagrees with your approach and wants evidence before moving forward. Explain your position, then show how you would keep the conversation constructive.',
-      daily_standup: 'Welcome to today\'s standup. Give a concise update covering what you completed, what you will do next, and any blocker that needs the team\'s help.',
-      priority_conflict: 'You are handling two urgent stakeholder requests with limited capacity. Start by explaining how you would compare impact, urgency, and dependencies before choosing what comes first.'
-    };
 
     socket.emit('scenarioStarted', {
       type: scenarioType,
-      intro: scenarioIntros[scenarioType]
+      intro: scenario.intro
     });
   });
 
@@ -286,7 +273,15 @@ io.on('connection', (socket) => {
 
   socket.on('generateFeedback', async () => {
     if (!groqService) return;
-    const feedback = groqService.generateFeedback(socket.userId);
+    let feedback;
+    try {
+      feedback = await groqService.generateFeedback(socket.userId);
+    } catch (error) {
+      console.warn(`Scenario feedback failed for user ${socket.userId}: ${error.message}`);
+      socket.emit('feedbackError', error.message);
+      return;
+    }
+
     try {
       const recommendation = await groqService.generateSkillGapRecommendation(socket.userId);
       if (recommendation) socket.emit('feedbackGenerated', { feedback, recommendation });
