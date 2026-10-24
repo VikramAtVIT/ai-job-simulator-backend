@@ -1,0 +1,28 @@
+{
+  "user123": {
+    "userId": "user123",
+    "name": "Demo User",
+    "email": "demo@codeapex.com",
+    "completedScenarios": 12,
+    "totalAttempts": 34,
+    "totalScore": 984,
+    "scenarioProgress": {
+      "manager_review": {
+        "attempts": 8,
+        "bestScore": 85
+      },
+      "client_requirement": {
+        "attempts": 5,
+        "bestScore": 78
+      },
+      "production_incident": {
+        "attempts": 3,
+        "bestScore": 72
+      },
+      "difficult_colleague": {
+        "attempts": 2,
+        "bestScore": 68
+      }
+    }
+  }
+}

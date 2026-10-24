@@ -47,16 +47,14 @@ app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'public',
 
 app.post(['/api/login', '/api/auth/login'], (req, res) => {
   const { email, password } = req.body;
-  if (email === 'demo@codeapex.com' && password === 'demo123') {
-    if (!groqService.userProfiles.user123) {
-      groqService.createUserProfile('user123', 'Demo User', email);
-    }
+  const account = groqService.authenticate(email || '', password || '');
+  if (account) {
     res.json({
       success: true,
-      userId: 'user123',
-      email,
-      user: { id: 'user123', email, name: 'Demo User' },
-      token: 'demo-token'
+      userId: account.userId,
+      email: account.email,
+      user: { id: account.userId, email: account.email, name: account.name },
+      token: `token_${account.userId}`
     });
   } else {
     res.status(401).json({
@@ -77,14 +75,20 @@ app.post(['/api/signup', '/api/auth/signup'], (req, res) => {
     });
   }
 
-  const userId = 'user_' + Date.now();
-  groqService.createUserProfile(userId, name, email);
+  const account = groqService.createAccount(name, email, password);
+  if (!account) {
+    return res.status(409).json({
+      success: false,
+      error: 'An account with this email already exists',
+      message: 'An account with this email already exists'
+    });
+  }
   res.json({
     success: true,
-    userId,
-    email,
-    user: { id: userId, email, name },
-    token: 'token_' + Date.now()
+    userId: account.userId,
+    email: account.email,
+    user: { id: account.userId, email: account.email, name },
+    token: `token_${account.userId}`
   });
 });
 
@@ -150,7 +154,7 @@ io.on('connection', (socket) => {
         message,
         groqService.userScenarioState[socket.userId].type
       );
-      socket.emit('aiResponse', { message: response });
+      socket.emit('aiResponse', response);
     } catch (err) {
       socket.emit('error', err.message);
     }
@@ -183,7 +187,7 @@ io.on('connection', (socket) => {
         transcript,
         scenarioState.type
       );
-      socket.emit('aiResponse', { message: response });
+      socket.emit('aiResponse', response);
     } catch (err) {
       socket.emit('error', err.message);
     }

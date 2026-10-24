@@ -1,9 +1,14 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
 class GroqService {
   constructor(apiKey) {
     this.apiKey = apiKey;
     this.conversationHistory = {};
     this.userScenarioState = {};
-    this.userProfiles = {};
+    this.userProfiles = this.loadProfiles();
+    this.accounts = this.loadAccounts();
     try {
       const Groq = require('groq-sdk');
       this.groq = apiKey ? new Groq({ apiKey }) : null;
@@ -13,8 +18,94 @@ class GroqService {
     }
   }
 
+  loadProfiles() {
+    const profilesPath = path.join(__dirname, '..', 'data', 'users.json');
+    try {
+      const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+      return profiles;
+    } catch (error) {
+      return {
+        user123: {
+          userId: 'user123',
+          name: 'Demo User',
+          email: 'demo@codeapex.com',
+          completedScenarios: 12,
+          totalAttempts: 34,
+          totalScore: 984,
+          scenarioProgress: {
+            manager_review: { attempts: 8, bestScore: 85 },
+            client_requirement: { attempts: 5, bestScore: 78 },
+            production_incident: { attempts: 3, bestScore: 72 },
+            difficult_colleague: { attempts: 2, bestScore: 68 }
+          }
+        }
+      };
+    }
+  }
+
+  saveProfiles() {
+    const profilesPath = path.join(__dirname, '..', 'data', 'users.json');
+    fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
+    fs.writeFileSync(profilesPath, JSON.stringify(this.userProfiles, null, 2));
+  }
+
+  loadAccounts() {
+    const accountsPath = path.join(__dirname, '..', 'data', 'accounts.json');
+    try {
+      return JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
+    } catch (error) {
+      return {};
+    }
+  }
+
+  saveAccounts() {
+    const accountsPath = path.join(__dirname, '..', 'data', 'accounts.json');
+    fs.mkdirSync(path.dirname(accountsPath), { recursive: true });
+    fs.writeFileSync(accountsPath, JSON.stringify(this.accounts, null, 2));
+  }
+
+  hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    return `${salt}:${hash}`;
+  }
+
+  verifyPassword(password, storedHash) {
+    const [salt, expectedHash] = storedHash.split(':');
+    const actualHash = crypto.scryptSync(password, salt, 64).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+  }
+
+  createAccount(name, email, password) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (this.accounts[normalizedEmail]) return null;
+    const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    this.accounts[normalizedEmail] = {
+      userId,
+      email: normalizedEmail,
+      passwordHash: this.hashPassword(password)
+    };
+    this.createUserProfile(userId, name, normalizedEmail);
+    this.saveAccounts();
+    return { userId, email: normalizedEmail };
+  }
+
+  authenticate(email, password) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail === 'demo@codeapex.com' && password === 'demo123') {
+      return { userId: 'user123', email: normalizedEmail, name: 'Demo User' };
+    }
+    const account = this.accounts[normalizedEmail];
+    if (!account || !this.verifyPassword(password, account.passwordHash)) return null;
+    return {
+      userId: account.userId,
+      email: account.email,
+      name: this.getUserProfile(account.userId).name
+    };
+  }
+
   createUserProfile(userId, name, email) {
-      this.userProfiles[userId] = {
+    if (this.userProfiles[userId]) return this.userProfiles[userId];
+    this.userProfiles[userId] = {
         userId,
         name,
         email,
@@ -22,8 +113,9 @@ class GroqService {
         totalAttempts: 0,
         totalScore: 0,
         scenarioProgress: {}
-      };
-      return this.userProfiles[userId];
+    };
+    this.saveProfiles();
+    return this.userProfiles[userId];
   }
 
   getUserProfile(userId) {
@@ -43,6 +135,31 @@ class GroqService {
       currentLevel: profile.completedScenarios >= 10 ? 'Pro' : profile.completedScenarios >= 5 ? 'Advanced' : 'Starter',
       scenarioProgress: profile.scenarioProgress
     };
+  }
+
+  getSkillRecommendation(scenarioType, message) {
+    const normalizedMessage = message.toLowerCase();
+    const recommendations = {
+      manager_review: normalizedMessage.match(/\b(result|impact|metric|outcome|number|percentage)\b/)
+        ? 'Good evidence. Strengthen it further by connecting the result to a business or team outcome.'
+        : 'Skill gap: use a specific result with measurable impact, then explain what you learned.',
+      client_requirement: normalizedMessage.match(/\b(user|customer|acceptance|scope|constraint|priority|requirement)\b/)
+        ? 'Good discovery focus. Add a measurable acceptance criterion and confirm what is out of scope.'
+        : 'Skill gap: ask about the user problem, success measure, constraints, and must-have scope before solutioning.',
+      production_incident: normalizedMessage.match(/\b(impact|rollback|logs|metric|monitor|mitigat|communicat|customer)\b/)
+        ? 'Good incident thinking. Make the next action time-bound and assign clear communication ownership.'
+        : 'Skill gap: start with customer impact, evidence, containment, and an explicit communication owner.',
+      difficult_colleague: normalizedMessage.match(/\b(evidence|trade-off|tradeoff|listen|agree|test|experiment|impact)\b/)
+        ? 'Good collaborative framing. State the shared decision criterion before defending your preferred option.'
+        : 'Skill gap: acknowledge the concern, use evidence, and propose a small test against a shared goal.',
+      daily_standup: normalizedMessage.match(/\b(done|completed|today|next|block|help|yesterday)\b/)
+        ? 'Good standup structure. Keep the update concise and name the owner or next action for each blocker.'
+        : 'Skill gap: structure the update as done, next, and blockers that need team help.',
+      priority_conflict: normalizedMessage.match(/\b(impact|urgent|depend|customer|cost|delay|communicat|priorit)\b/)
+        ? 'Good prioritization logic. Make the trade-off explicit and communicate the revised expectation to the waiting stakeholder.'
+        : 'Skill gap: compare impact, urgency, dependencies, and cost of delay before communicating the decision.'
+    };
+    return recommendations[scenarioType] || recommendations.manager_review;
   }
 
   initializeScenario(userId, scenarioType) {
@@ -110,14 +227,19 @@ class GroqService {
               content: `You are ${profile.role} in a live workplace simulation.
 Scenario goal: ${profile.goal}
 Scenario coaching focus: ${profile.style}
-Evaluate the user's latest response against this scenario only. Refer to specific details they said, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill.`
+Evaluate the user's latest response against this scenario only. Refer to specific details they said, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill. End with a separate line in this exact format: COACHING_NOTE: [one concise recommendation for the user's biggest skill gap].`
             },
             ...this.conversationHistory[userId]
           ]
         });
-        const aiMessage = response.choices[0].message.content;
+        const rawMessage = response.choices[0].message.content;
+        const recommendationMatch = rawMessage.match(/COACHING_NOTE:\s*(.+)$/im);
+        const aiMessage = rawMessage.replace(/\s*COACHING_NOTE:\s*.+$/im, '').trim();
+        const recommendation = recommendationMatch
+          ? recommendationMatch[1].trim()
+          : this.getSkillRecommendation(activeScenario, message);
         this.conversationHistory[userId].push({ role: 'assistant', content: aiMessage });
-        return aiMessage;
+        return { message: aiMessage, recommendation };
       } catch (err) {
         console.warn('Groq error, using mock response:', err.message);
       }
@@ -150,7 +272,10 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
       ]
     };
     const responses = mockResponses[activeScenario] || mockResponses.manager_review;
-    return responses[((state?.turnCount || 1) - 1) % responses.length];
+    return {
+      message: responses[((state?.turnCount || 1) - 1) % responses.length],
+      recommendation: this.getSkillRecommendation(activeScenario, message)
+    };
   }
 
   generateFeedback(userId) {
@@ -166,6 +291,7 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
         attempts: (profile.scenarioProgress[state.type]?.attempts || 0) + 1,
         bestScore: Math.max(profile.scenarioProgress[state.type]?.bestScore || 0, score)
       };
+      this.saveProfiles();
     }
 
     return {
