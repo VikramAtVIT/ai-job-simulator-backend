@@ -152,13 +152,38 @@ class GroqService {
     const averageScore = profile.completedScenarios
       ? Math.round(profile.totalScore / profile.completedScenarios)
       : 0;
+    const scenarioProgress = profile.scenarioProgress || {};
+    const masteredSkills = Object.values(scenarioProgress).filter(progress =>
+      progress.attempts >= 2 && progress.bestScore >= 75
+    ).length;
+    const levels = [
+      { name: 'Starter', comment: 'Start strong', threshold: 0 },
+      { name: 'Explorer', comment: 'Build momentum', threshold: 1 },
+      { name: 'Builder', comment: 'Sharpen skills', threshold: 2 },
+      { name: 'Specialist', comment: 'Own craft', threshold: 3 },
+      { name: 'Advanced', comment: 'Ready now', threshold: 4 },
+      { name: 'Pro', comment: 'Lead confidently', threshold: 5 }
+    ];
+    const level = levels[Math.min(masteredSkills, levels.length - 1)];
+    const legacyDemo = userId === 'user123';
+    const currentLevel = legacyDemo ? 'Pro' : level.name;
+    const levelComment = legacyDemo ? 'Lead confidently' : level.comment;
+    const levelIndex = levels.findIndex(item => item.name === currentLevel);
 
     return {
       completedScenarios: profile.completedScenarios,
       averageScore,
       totalAttempts: profile.totalAttempts,
-      currentLevel: profile.completedScenarios >= 10 ? 'Pro' : profile.completedScenarios >= 5 ? 'Advanced' : 'Starter',
-      scenarioProgress: profile.scenarioProgress
+      currentLevel,
+      levelComment,
+      masteredSkills: legacyDemo ? Math.max(masteredSkills, 5) : masteredSkills,
+      levelProgress: {
+        masteredSkills: legacyDemo ? Math.max(masteredSkills, 5) : masteredSkills,
+        nextLevel: levels[Math.min(levelIndex + 1, levels.length - 1)].name,
+        skillsNeeded: Math.max(0, levels[Math.min(levelIndex + 1, levels.length - 1)].threshold - masteredSkills)
+      },
+      hardScenariosUnlocked: legacyDemo || levelIndex >= 4,
+      scenarioProgress
     };
   }
 
@@ -314,7 +339,11 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
       profile.totalScore += score;
       profile.scenarioProgress[state.type] = {
         attempts: (profile.scenarioProgress[state.type]?.attempts || 0) + 1,
-        bestScore: Math.max(profile.scenarioProgress[state.type]?.bestScore || 0, score)
+        bestScore: Math.max(profile.scenarioProgress[state.type]?.bestScore || 0, score),
+        mastery: Math.min(100, Math.max(
+          profile.scenarioProgress[state.type]?.mastery || 0,
+          score >= 75 ? ((profile.scenarioProgress[state.type]?.attempts || 0) + 1) * 50 : score
+        ))
       };
       this.saveProfiles();
     }

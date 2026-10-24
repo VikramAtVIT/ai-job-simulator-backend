@@ -186,6 +186,11 @@ io.on('connection', (socket) => {
       socket.emit('error', 'Please select a valid scenario');
       return;
     }
+    const hardScenarios = ['production_incident', 'difficult_colleague', 'priority_conflict'];
+    if (hardScenarios.includes(scenarioType) && !groqService.getUserStats(socket.userId).hardScenariosUnlocked) {
+      socket.emit('error', 'Complete more mastered skills to unlock hard scenarios');
+      return;
+    }
 
     groqService.initializeScenario(socket.userId, scenarioType);
     const scenarioIntros = {
