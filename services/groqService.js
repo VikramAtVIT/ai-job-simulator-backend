@@ -102,7 +102,7 @@ class GroqService {
     if (this.groq) {
       try {
         const response = await this.groq.chat.completions.create({
-          model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
+          model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
           max_tokens: 150,
           messages: [
             {
