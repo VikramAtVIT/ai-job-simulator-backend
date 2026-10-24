@@ -174,18 +174,21 @@ class GroqService {
     ).length;
     const levels = [
       { name: 'Starter', comment: 'Start strong', threshold: 0 },
-      { name: 'Explorer', comment: 'Build momentum', threshold: 1 },
-      { name: 'Builder', comment: 'Sharpen skills', threshold: 2 },
-      { name: 'Specialist', comment: 'Own craft', threshold: 3 },
-      { name: 'Advanced', comment: 'Ready now', threshold: 4 },
-      { name: 'Pro', comment: 'Lead confidently', threshold: 5 }
+      { name: 'Explorer', comment: 'Build momentum', threshold: 2 },
+      { name: 'Builder', comment: 'Sharpen skills', threshold: 4 },
+      { name: 'Specialist', comment: 'Own your craft', threshold: 6 },
+      { name: 'Advanced', comment: 'Ready for the toughest scenarios', threshold: 8 },
+      { name: 'Pro', comment: 'Lead confidently', threshold: 10 }
     ];
-    const level = levels[Math.min(masteredSkills, levels.length - 1)];
+    const level = [...levels].reverse().find(item => masteredSkills >= item.threshold) || levels[0];
     const legacyDemo = userId === 'user123';
     const currentLevel = legacyDemo ? 'Pro' : level.name;
     const levelComment = legacyDemo ? 'Lead confidently' : level.comment;
     const levelIndex = levels.findIndex(item => item.name === currentLevel);
     const effectiveMasteredSkills = legacyDemo ? Math.max(masteredSkills, 5) : masteredSkills;
+    const nextLevel = legacyDemo
+      ? levels[levels.length - 1]
+      : levels.find(item => item.threshold > effectiveMasteredSkills) || levels[levels.length - 1];
 
     return {
       completedScenarios: profile.completedScenarios,
@@ -196,8 +199,10 @@ class GroqService {
       masteredSkills: effectiveMasteredSkills,
       levelProgress: {
         masteredSkills: effectiveMasteredSkills,
-        nextLevel: levels[Math.min(levelIndex + 1, levels.length - 1)].name,
-        skillsNeeded: Math.max(0, levels[Math.min(levelIndex + 1, levels.length - 1)].threshold - effectiveMasteredSkills)
+        nextLevel: nextLevel.name,
+        skillsNeeded: levelIndex === levels.length - 1
+          ? 0
+          : Math.max(0, nextLevel.threshold - effectiveMasteredSkills)
       },
       hardScenariosUnlocked: legacyDemo || levelIndex >= 4,
       scenarioProgress,

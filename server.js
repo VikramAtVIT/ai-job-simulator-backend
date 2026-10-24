@@ -200,7 +200,7 @@ io.on('connection', (socket) => {
       return;
     }
     if (scenario.difficulty === 'hard' && !groqService.getUserStats(socket.userId).hardScenariosUnlocked) {
-      socket.emit('error', 'Master four scenario types to unlock hard scenarios at Advanced level.');
+      socket.emit('error', 'Master eight scenario types to unlock hard scenarios at Advanced level.');
       return;
     }
 
