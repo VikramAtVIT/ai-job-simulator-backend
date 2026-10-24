@@ -163,6 +163,23 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', groqConfigured: Boolean(groqService && groqService.groq) });
 });
 
+async function emitSkillGapRecommendation(socket) {
+  const scenarioState = groqService.userScenarioState[socket.userId];
+  const turnCount = scenarioState && scenarioState.turnCount;
+  try {
+    const recommendation = await groqService.generateSkillGapRecommendation(socket.userId);
+    if (recommendation) socket.emit('skillGapRecommendation', recommendation);
+  } catch (error) {
+    console.warn(`Skill-gap recommendation failed for user ${socket.userId}: ${error.message}`);
+    if (groqService.userScenarioState[socket.userId] === scenarioState
+      && scenarioState?.turnCount === turnCount) {
+      socket.emit('skillGapRecommendationError', {
+        message: 'AI skill-gap analysis is unavailable. Please try again later.'
+      });
+    }
+  }
+}
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
   const requestedUserId = socket.handshake.auth && socket.handshake.auth.userId;
@@ -227,6 +244,7 @@ io.on('connection', (socket) => {
         groqService.userScenarioState[socket.userId].type
       );
       socket.emit('aiResponse', response);
+      await emitSkillGapRecommendation(socket);
     } catch (err) {
       socket.emit('error', err.message);
     }
@@ -260,6 +278,7 @@ io.on('connection', (socket) => {
         scenarioState.type
       );
       socket.emit('aiResponse', response);
+      await emitSkillGapRecommendation(socket);
     } catch (err) {
       socket.emit('error', err.message);
     }
@@ -270,7 +289,8 @@ io.on('connection', (socket) => {
     const feedback = groqService.generateFeedback(socket.userId);
     try {
       const recommendation = await groqService.generateSkillGapRecommendation(socket.userId);
-      socket.emit('feedbackGenerated', { feedback, recommendation });
+      if (recommendation) socket.emit('feedbackGenerated', { feedback, recommendation });
+      else socket.emit('feedbackGenerated', { feedback });
     } catch (error) {
       console.warn(`Skill-gap recommendation failed for user ${socket.userId}: ${error.message}`);
       socket.emit('feedbackGenerated', {

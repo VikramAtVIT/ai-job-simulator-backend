@@ -240,7 +240,8 @@ class GroqService {
       type: scenarioType,
       turnCount: 0,
       qualityScores: [],
-      startTime: Date.now()
+      startTime: Date.now(),
+      latestSkillGapRecommendation: null
     };
     this.conversationHistory[userId] = [];
   }
@@ -287,7 +288,10 @@ class GroqService {
     const profile = scenarioProfiles[activeScenario] || scenarioProfiles.manager_review;
 
     this.conversationHistory[userId].push({ role: 'user', content: message });
-    if (state) state.turnCount += 1;
+    if (state) {
+      state.turnCount += 1;
+      state.latestSkillGapRecommendation = null;
+    }
 
     if (this.groq) {
       try {
@@ -404,6 +408,10 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
 
   async generateSkillGapRecommendation(userId) {
     const state = this.userScenarioState[userId];
+    if (state && state.latestSkillGapRecommendation?.turnCount === state.turnCount) {
+      return state.latestSkillGapRecommendation.recommendation;
+    }
+    const analyzedTurnCount = state && state.turnCount;
     const answers = (this.conversationHistory[userId] || [])
       .filter(message => message.role === 'user' && typeof message.content === 'string')
       .map(message => message.content.trim())
@@ -455,6 +463,7 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
       };
     };
 
+    let recommendation;
     if (this.groq) {
       try {
         const response = await this.groq.chat.completions.create({
@@ -462,25 +471,37 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
           max_tokens: 250,
           messages
         });
-        return parseRecommendation(response.choices[0]?.message?.content);
+        recommendation = parseRecommendation(response.choices[0]?.message?.content);
       } catch (error) {
         console.warn(`Groq skill-gap analysis failed, trying fallback providers: ${error.message}`);
       }
     }
 
-    for (const provider of this.fallbackProviders) {
-      try {
-        const recommendation = parseRecommendation(
-          await this.callFallbackProvider(provider, messages)
-        );
-        console.warn(`Skill-gap analysis served by ${provider.name}`);
-        return recommendation;
-      } catch (error) {
-        console.warn(`${provider.name} skill-gap analysis failed: ${error.message}`);
+    if (!recommendation) {
+      for (const provider of this.fallbackProviders) {
+        try {
+          recommendation = parseRecommendation(
+            await this.callFallbackProvider(provider, messages)
+          );
+          console.warn(`Skill-gap analysis served by ${provider.name}`);
+          break;
+        } catch (error) {
+          console.warn(`${provider.name} skill-gap analysis failed: ${error.message}`);
+        }
       }
     }
 
-    throw new Error('AI skill-gap analysis is unavailable. Please try again later.');
+    if (!recommendation) {
+      throw new Error('AI skill-gap analysis is unavailable. Please try again later.');
+    }
+    if (this.userScenarioState[userId] !== state || state.turnCount !== analyzedTurnCount) {
+      return null;
+    }
+    state.latestSkillGapRecommendation = {
+      turnCount: analyzedTurnCount,
+      recommendation
+    };
+    return recommendation;
   }
 
   getPerformanceStats(userId) {
