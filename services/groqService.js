@@ -304,7 +304,7 @@ class GroqService {
               content: `You are ${profile.role} in a live workplace simulation.
 Scenario goal: ${profile.goal}
 Scenario coaching focus: ${profile.style}
-Evaluate the user's latest response against this scenario only. Refer to specific details they said, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill.`
+Evaluate the user's latest response against this scenario only. Refer to a specific detail from their newest answer, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Read the previous assistant turns and do not repeat their wording, feedback, or follow-up questions; each reply must add a new development to the conversation. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill.`
             },
             ...this.conversationHistory[userId]
           ]
@@ -326,7 +326,7 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
         const fallbackMessages = [
           {
             role: 'system',
-            content: `Continue this workplace simulation as the scenario stakeholder. Stay focused on ${activeScenario}. Respond in 2-4 natural sentences and ask exactly one focused follow-up question.`
+            content: `Continue this workplace simulation as the scenario stakeholder. Stay focused on ${activeScenario}. React to a specific detail in the user's newest answer and move the situation forward. Read the previous assistant turns and do not repeat their wording or follow-up questions. Respond in 2-4 natural sentences and ask exactly one focused follow-up question.`
           },
           ...this.conversationHistory[userId]
         ];
@@ -343,36 +343,59 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
       }
     }
 
-    const mockResponses = {
+    const fallbackQuestions = {
       manager_review: [
-        "That is a useful starting point. What measurable impact did your work have, and what would you do differently next quarter?",
-        "I appreciate the reflection. Which skill would you most like to develop, and what support would help you build it?"
+        'What evidence would show that this made a meaningful difference to the team?',
+        'What would you change if you had to handle the same challenge next quarter?',
+        'Which part did you personally own, and where would support have helped?',
+        'How will you turn that learning into one measurable goal for next month?'
       ],
       client_requirement: [
-        "Before we discuss implementation, what user problem should this feature solve and how will we measure success?",
-        "That approach could work. Which requirement is essential for the first release, and what can we safely defer?"
+        'Which user need should we prioritize first, and how would we know it is solved?',
+        'What is the smallest useful first release, and what can safely wait?',
+        'Which constraint could change your proposal most: budget, timeline, or user impact?',
+        'What acceptance test would let us agree that this requirement is complete?'
       ],
       production_incident: [
-        "First, confirm the customer impact and current error rate. What evidence would you check before choosing a mitigation?",
-        "Good response. Who will communicate the incident status, and what is your safest rollback or containment option?"
+        'What signal would confirm whether the impact is growing or contained?',
+        'Which mitigation is safest to try first, and what would make you roll it back?',
+        'Who needs the next status update, and what can you confidently tell them now?',
+        'After recovery, what evidence would help identify the underlying cause?'
       ],
       difficult_colleague: [
-        "I hear your concern. Which performance assumption do you think is most risky, and what evidence would help us test it?",
-        "That is a reasonable trade-off. How could we compare both approaches with a small experiment instead of debating in the abstract?"
+        'What shared success measure could we use to compare our approaches fairly?',
+        'Which assumption should we test first with a small, low-risk experiment?',
+        'What concern do you think I have not addressed yet?',
+        'How could we combine the strongest parts of both proposals?'
       ],
       daily_standup: [
-        "Keep the update concise: what did you finish, what will you do next, and is anything blocking you?",
-        "Thanks. What specific outcome will you deliver by the end of today, and who needs to know about your blocker?"
+        'What specific outcome should the team expect from you by the end of today?',
+        'Is anything blocking that next step, and who can help remove the blocker?',
+        'Who depends on this work, and when should they expect an update?',
+        'What is the most important progress the team should know about first?'
       ],
       priority_conflict: [
-        "Start by comparing customer impact, urgency, and dependencies. Which request has the greater cost of delay?",
-        "That trade-off is clear. How will you communicate the decision and revised expectation to the stakeholder who must wait?"
+        'Which request has the greater customer impact if it waits another day?',
+        'What dependency or deadline would change your ordering of these requests?',
+        'How will you reset expectations with the stakeholder whose request comes second?',
+        'What evidence would make you revisit this priority decision?'
       ]
     };
-    const responses = mockResponses[activeScenario] || mockResponses.manager_review;
-    return {
-      message: responses[((state?.turnCount || 1) - 1) % responses.length]
-    };
+    const turnIndex = Math.max(0, (state?.turnCount || 1) - 1);
+    const responseStyles = [
+      'You mentioned',
+      'I’m hearing',
+      'The key detail in your answer is',
+      'That gives me a clearer picture of'
+    ];
+    const answerSummary = message.replace(/\s+/g, ' ').trim().slice(0, 180);
+    const responseStyle = responseStyles[turnIndex % responseStyles.length];
+    const questions = fallbackQuestions[activeScenario] || fallbackQuestions.manager_review;
+    const questionIndex = (turnIndex + Math.floor(turnIndex / responseStyles.length)) % questions.length;
+    const question = questions[questionIndex];
+    const fallbackResponse = `${responseStyle} "${answerSummary}". ${question}`;
+    this.conversationHistory[userId].push({ role: 'assistant', content: fallbackResponse });
+    return { message: fallbackResponse };
   }
 
   generateFeedback(userId) {
