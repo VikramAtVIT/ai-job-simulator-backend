@@ -1,13 +1,12 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const path = require('path');
+const { verifyToken } = require('@clerk/backend');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: '*' } });
-const googleAuthStates = new Map();
 
 let groqService = null;
 
@@ -39,128 +38,37 @@ app.use((req, res, next) => {
 
   next();
 });
-app.use('/pages', express.static(path.join(__dirname, 'pages')));
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.get('/', (req, res) => res.redirect('/login.html'));
-app.get('/login.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
-app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
-app.post(['/api/login', '/api/auth/login'], (req, res) => {
-  const { email, password } = req.body;
-  const account = groqService.authenticate(email || '', password || '');
-  if (account) {
-    res.json({
-      success: true,
-      userId: account.userId,
-      email: account.email,
-      user: { id: account.userId, email: account.email, name: account.name },
-      token: `token_${account.userId}`
-    });
-  } else {
-    res.status(401).json({
-      success: false,
-      error: 'Invalid credentials. Try: demo@codeapex.com / demo123',
-      message: 'Invalid credentials. Try: demo@codeapex.com / demo123'
-    });
-  }
+const frontendUrl = (process.env.FRONTEND_PUBLIC_URL || 'http://localhost:5500').replace(/\/$/, '');
+app.get(['/', '/login.html', '/signup.html', '/index.html'], (req, res) => {
+  const page = req.path === '/index.html'
+    ? 'index.html'
+    : req.path === '/signup.html'
+      ? 'signup.html'
+      : 'login.html';
+  res.redirect(`${frontendUrl}/${page}`);
 });
 
-app.post(['/api/signup', '/api/auth/signup'], (req, res) => {
-  const { email, password, name } = req.body;
-  if (!email || !password || !name) {
-    return res.status(400).json({
-      success: false,
-      error: 'Name, email, and password are required',
-      message: 'Name, email, and password are required'
-    });
-  }
+app.use(['/api/login', '/api/auth/login', '/api/signup', '/api/auth/signup', '/api/auth/google'], (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'Authentication is managed by Clerk. Use the application sign-in or sign-up page.'
+  });
+});
 
-  const account = groqService.createAccount(name, email, password);
-  if (!account) {
-    return res.status(409).json({
-      success: false,
-      error: 'An account with this email already exists',
-      message: 'An account with this email already exists'
-    });
-  }
+app.get('/api/config', (req, res) => {
+  const clerkEnabled = Boolean(process.env.CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
   res.json({
-    success: true,
-    userId: account.userId,
-    email: account.email,
-    user: { id: account.userId, email: account.email, name },
-    token: `token_${account.userId}`
+    clerkEnabled,
+    clerkPublishableKey: clerkEnabled ? process.env.CLERK_PUBLISHABLE_KEY : null
   });
 });
-
-  app.get('/api/auth/google/url', (req, res) => {
-      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-        res.status(503).json({ success: false, message: 'Google sign-in is not configured on this server yet.' });
-        return;
-      }
-
-      const state = require('crypto').randomBytes(24).toString('hex');
-      googleAuthStates.set(state, Date.now());
-      const callbackUrl = `${process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`}/api/auth/google/callback`;
-      const params = new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        redirect_uri: callbackUrl,
-        response_type: 'code',
-        scope: 'openid email profile',
-        access_type: 'offline',
-        state
-      });
-      res.json({ success: true, url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
-    });
-
-  app.get('/api/auth/google/callback', async (req, res) => {
-      const { code, state } = req.query;
-      const stateCreatedAt = googleAuthStates.get(state);
-      googleAuthStates.delete(state);
-      if (!code || !stateCreatedAt || Date.now() - stateCreatedAt > 10 * 60 * 1000) {
-        res.status(400).send('Google sign-in could not be verified. Please try again.');
-        return;
-      }
-
-      try {
-        const callbackUrl = `${process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`}/api/auth/google/callback`;
-        const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            code,
-            client_id: process.env.GOOGLE_CLIENT_ID,
-            client_secret: process.env.GOOGLE_CLIENT_SECRET,
-            redirect_uri: callbackUrl,
-            grant_type: 'authorization_code'
-          })
-        });
-        const tokens = await tokenResponse.json();
-        if (!tokenResponse.ok || !tokens.access_token) throw new Error('Google token exchange failed');
-
-        const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-          headers: { Authorization: `Bearer ${tokens.access_token}` }
-        });
-        const profile = await profileResponse.json();
-        if (!profileResponse.ok || !profile.email) throw new Error('Google profile lookup failed');
-
-        const account = groqService.findOrCreateGoogleAccount(profile.name, profile.email);
-        if (!account) throw new Error('Unable to create Google account');
-        const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'http://localhost:5500';
-        const redirectParams = new URLSearchParams({
-          authToken: `token_${account.userId}`,
-          userId: account.userId,
-          user: JSON.stringify({ id: account.userId, email: account.email, name: account.name })
-        });
-        res.redirect(`${frontendUrl}/index.html?${redirectParams}`);
-      } catch (error) {
-        console.error('Google authentication failed:', error.message);
-        res.status(502).send('Google sign-in failed. Please try again.');
-      }
-  });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', groqConfigured: Boolean(groqService && groqService.groq) });
+  res.json({
+    status: 'ok',
+    groqConfigured: Boolean(groqService && groqService.groq),
+    clerkConfigured: Boolean(process.env.CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY)
+  });
 });
 
 async function emitSkillGapRecommendation(socket) {
@@ -180,12 +88,39 @@ async function emitSkillGapRecommendation(socket) {
   }
 }
 
+io.use(async (socket, next) => {
+  const secretKey = process.env.CLERK_SECRET_KEY;
+  const token = socket.handshake.auth && socket.handshake.auth.token;
+  if (!secretKey || typeof token !== 'string' || !token) {
+    next(new Error('A valid Clerk session is required.'));
+    return;
+  }
+
+  const configuredParties = (process.env.CLERK_AUTHORIZED_PARTIES || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+  const authorizedParties = Array.from(new Set([
+    ...configuredParties,
+    process.env.FRONTEND_PUBLIC_URL,
+    'http://localhost:5500'
+  ].filter(Boolean)));
+
+  try {
+    const payload = await verifyToken(token, { secretKey, authorizedParties });
+    if (typeof payload.sub !== 'string' || !payload.sub) {
+      throw new Error('Clerk session token did not include a user ID.');
+    }
+    socket.userId = payload.sub;
+    next();
+  } catch (error) {
+    console.warn(`Clerk socket authentication failed: ${error.message}`);
+    next(new Error('Your session could not be verified. Please sign in again.'));
+  }
+});
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
-  const requestedUserId = socket.handshake.auth && socket.handshake.auth.userId;
-  socket.userId = typeof requestedUserId === 'string' && requestedUserId
-    ? requestedUserId
-    : socket.id;
   socket.emit('userStats', groqService.getUserStats(socket.userId));
 
   socket.on('selectScenario', (data) => {
