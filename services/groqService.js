@@ -3,6 +3,7 @@ class GroqService {
     this.apiKey = apiKey;
     this.conversationHistory = {};
     this.userScenarioState = {};
+    this.userProfiles = {};
     try {
       const Groq = require('groq-sdk');
       this.groq = apiKey ? new Groq({ apiKey }) : null;
@@ -10,6 +11,38 @@ class GroqService {
     } catch (err) {
       this.groq = null;
     }
+  }
+
+  createUserProfile(userId, name, email) {
+      this.userProfiles[userId] = {
+        userId,
+        name,
+        email,
+        completedScenarios: 0,
+        totalAttempts: 0,
+        totalScore: 0,
+        scenarioProgress: {}
+      };
+      return this.userProfiles[userId];
+  }
+
+  getUserProfile(userId) {
+    return this.userProfiles[userId] || this.createUserProfile(userId, 'User', '');
+  }
+
+  getUserStats(userId) {
+    const profile = this.getUserProfile(userId);
+    const averageScore = profile.completedScenarios
+      ? Math.round(profile.totalScore / profile.completedScenarios)
+      : 0;
+
+    return {
+      completedScenarios: profile.completedScenarios,
+      averageScore,
+      totalAttempts: profile.totalAttempts,
+      currentLevel: profile.completedScenarios >= 10 ? 'Pro' : profile.completedScenarios >= 5 ? 'Advanced' : 'Starter',
+      scenarioProgress: profile.scenarioProgress
+    };
   }
 
   initializeScenario(userId, scenarioType) {
@@ -74,9 +107,10 @@ class GroqService {
           messages: [
             {
               role: 'system',
-              content: `You are ${profile.role}. The scenario goal is to ${profile.goal}.
-${profile.style}
-Respond directly to the user's latest message in 2-4 natural sentences. Stay in character, do not mention that you are an AI, and ask one focused follow-up question.`
+              content: `You are ${profile.role} in a live workplace simulation.
+Scenario goal: ${profile.goal}
+Scenario coaching focus: ${profile.style}
+Evaluate the user's latest response against this scenario only. Refer to specific details they said, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill.`
             },
             ...this.conversationHistory[userId]
           ]
@@ -120,13 +154,27 @@ Respond directly to the user's latest message in 2-4 natural sentences. Stay in 
   }
 
   generateFeedback(userId) {
+    const state = this.userScenarioState[userId];
+    const profile = this.getUserProfile(userId);
+    const turnCount = state?.turnCount || 0;
+    const score = Math.min(100, Math.max(0, turnCount ? 55 + Math.min(turnCount * 5, 35) : 0));
+    if (state) {
+      profile.completedScenarios += 1;
+      profile.totalAttempts += 1;
+      profile.totalScore += score;
+      profile.scenarioProgress[state.type] = {
+        attempts: (profile.scenarioProgress[state.type]?.attempts || 0) + 1,
+        bestScore: Math.max(profile.scenarioProgress[state.type]?.bestScore || 0, score)
+      };
+    }
+
     return {
-      score: 75,
+      score,
       rubrics: {
-        'Communication': 20,
-        'Problem Solving': 18,
-        'Professionalism': 19,
-        'Adaptability': 18
+        'Communication': Math.round(score * 0.25),
+        'Problem Solving': Math.round(score * 0.23),
+        'Professionalism': Math.round(score * 0.27),
+        'Adaptability': Math.round(score * 0.25)
       }
     };
   }

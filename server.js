@@ -48,6 +48,9 @@ app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'public',
 app.post(['/api/login', '/api/auth/login'], (req, res) => {
   const { email, password } = req.body;
   if (email === 'demo@codeapex.com' && password === 'demo123') {
+    if (!groqService.userProfiles.user123) {
+      groqService.createUserProfile('user123', 'Demo User', email);
+    }
     res.json({
       success: true,
       userId: 'user123',
@@ -75,6 +78,7 @@ app.post(['/api/signup', '/api/auth/signup'], (req, res) => {
   }
 
   const userId = 'user_' + Date.now();
+  groqService.createUserProfile(userId, name, email);
   res.json({
     success: true,
     userId,
@@ -90,6 +94,11 @@ app.get('/api/health', (req, res) => {
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
+  const requestedUserId = socket.handshake.auth && socket.handshake.auth.userId;
+  socket.userId = typeof requestedUserId === 'string' && requestedUserId
+    ? requestedUserId
+    : socket.id;
+  socket.emit('userStats', groqService.getUserStats(socket.userId));
 
   socket.on('selectScenario', (data) => {
     const scenarioType = data && data.scenarioType;
@@ -107,7 +116,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    groqService.initializeScenario(socket.id, scenarioType);
+    groqService.initializeScenario(socket.userId, scenarioType);
     const scenarioIntros = {
       manager_review: 'Your manager asks how your quarter has gone and what support would help you grow.',
       client_requirement: 'A client presents a new feature request and wants a realistic delivery plan.',
@@ -130,16 +139,16 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (!groqService.userScenarioState[socket.id]) {
+    if (!groqService.userScenarioState[socket.userId]) {
       socket.emit('error', 'Select a scenario before sending a message');
       return;
     }
 
     try {
       const response = await groqService.generateResponse(
-        socket.id,
+        socket.userId,
         message,
-        groqService.userScenarioState[socket.id].type
+        groqService.userScenarioState[socket.userId].type
       );
       socket.emit('aiResponse', { message: response });
     } catch (err) {
@@ -154,7 +163,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const scenarioState = groqService.userScenarioState[socket.id];
+    const scenarioState = groqService.userScenarioState[socket.userId];
     if (!scenarioState) {
       socket.emit('error', 'Select a scenario before sending a voice message');
       return;
@@ -162,7 +171,7 @@ io.on('connection', (socket) => {
 
     try {
       const analysis = voiceService.analyzeVoice({
-        userId: socket.id,
+        userId: socket.userId,
         transcript,
         duration: data.duration,
         confidence: data.confidence
@@ -170,7 +179,7 @@ io.on('connection', (socket) => {
       socket.emit('voiceAnalysis', analysis);
 
       const response = await groqService.generateResponse(
-        socket.id,
+        socket.userId,
         transcript,
         scenarioState.type
       );
@@ -182,9 +191,10 @@ io.on('connection', (socket) => {
 
   socket.on('generateFeedback', (data) => {
     if (!groqService) return;
-    const feedback = groqService.generateFeedback(socket.id);
+    const feedback = groqService.generateFeedback(socket.userId);
     socket.emit('feedbackGenerated', { feedback });
-    groqService.clearScenario(socket.id);
+    socket.emit('userStats', groqService.getUserStats(socket.userId));
+    groqService.clearScenario(socket.userId);
   });
 
   socket.on('disconnect', () => {
