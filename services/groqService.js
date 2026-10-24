@@ -9,6 +9,20 @@ class GroqService {
     this.userScenarioState = {};
     this.userProfiles = this.loadProfiles();
     this.accounts = this.loadAccounts();
+    this.fallbackProviders = [
+      process.env.OPENROUTER_API_KEY && {
+        name: 'OpenRouter',
+        url: 'https://openrouter.ai/api/v1/chat/completions',
+        key: process.env.OPENROUTER_API_KEY,
+        model: process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b'
+      },
+      process.env.TOGETHER_API_KEY && {
+        name: 'Together AI',
+        url: 'https://api.together.xyz/v1/chat/completions',
+        key: process.env.TOGETHER_API_KEY,
+        model: process.env.TOGETHER_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo'
+      }
+    ].filter(Boolean);
     try {
       const Groq = require('groq-sdk');
       this.groq = apiKey ? new Groq({ apiKey }) : null;
@@ -212,6 +226,44 @@ class GroqService {
     return recommendations[scenarioType] || recommendations.manager_review;
   }
 
+  parseAiResponse(rawMessage, scenarioType, message) {
+    const cleanedMessage = typeof rawMessage === 'string' ? rawMessage.trim() : '';
+    if (!cleanedMessage) throw new Error('The AI returned an empty response');
+    const recommendationMatch = cleanedMessage.match(/COACHING_NOTE:\s*(.+)$/im);
+    const aiMessage = cleanedMessage.replace(/\s*COACHING_NOTE:\s*.+$/im, '').trim();
+    if (!aiMessage) throw new Error('The AI response did not contain a message');
+    return {
+      message: aiMessage,
+      recommendation: recommendationMatch
+        ? recommendationMatch[1].trim()
+        : this.getSkillRecommendation(scenarioType, message)
+    };
+  }
+
+  async callFallbackProvider(provider, messages) {
+    const response = await fetch(provider.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${provider.key}`,
+        'Content-Type': 'application/json',
+        ...(provider.name === 'OpenRouter' ? {
+          'HTTP-Referer': process.env.FRONTEND_PUBLIC_URL || 'https://ai-job-simulator-frontend.vercel.app',
+          'X-Title': 'AI Job Simulator'
+        } : {})
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        max_tokens: Number(process.env.GROQ_MAX_TOKENS || 600),
+        messages
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`${provider.name} request failed (${response.status})`);
+    }
+    return data.choices?.[0]?.message?.content;
+  }
+
   initializeScenario(userId, scenarioType) {
     this.userScenarioState[userId] = {
       type: scenarioType,
@@ -270,7 +322,7 @@ class GroqService {
       try {
         const response = await this.groq.chat.completions.create({
           model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-          max_tokens: 300,
+          max_tokens: Number(process.env.GROQ_MAX_TOKENS || 600),
           messages: [
             {
               role: 'system',
@@ -282,24 +334,37 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
             ...this.conversationHistory[userId]
           ]
         });
-        const rawMessage = response.choices[0] && response.choices[0].message
-          ? response.choices[0].message.content
-          : '';
-        if (typeof rawMessage !== 'string' || !rawMessage.trim()) {
-          throw new Error('The AI returned an empty response');
-        }
-        const recommendationMatch = rawMessage.match(/COACHING_NOTE:\s*(.+)$/im);
-        const aiMessage = rawMessage.replace(/\s*COACHING_NOTE:\s*.+$/im, '').trim();
-        if (!aiMessage) {
-          throw new Error('The AI returned a response without a message');
-        }
-        const recommendation = recommendationMatch
-          ? recommendationMatch[1].trim()
-          : this.getSkillRecommendation(activeScenario, message);
-        this.conversationHistory[userId].push({ role: 'assistant', content: aiMessage });
-        return { message: aiMessage, recommendation };
+        const parsed = this.parseAiResponse(
+          response.choices[0]?.message?.content,
+          activeScenario,
+          message
+        );
+        this.conversationHistory[userId].push({ role: 'assistant', content: parsed.message });
+        return parsed;
       } catch (err) {
-        console.warn('Groq error, using mock response:', err.message);
+        console.warn(`Groq failed, trying fallback providers: ${err.message}`);
+      }
+    }
+
+    for (const provider of this.fallbackProviders) {
+      try {
+        const fallbackMessages = [
+          {
+            role: 'system',
+            content: `Continue this workplace simulation as the scenario stakeholder. Stay focused on ${activeScenario}. Respond in 2-4 natural sentences, ask exactly one focused follow-up question, and end with COACHING_NOTE: followed by one concise skill-gap recommendation.`
+          },
+          ...this.conversationHistory[userId]
+        ];
+        const parsed = this.parseAiResponse(
+          await this.callFallbackProvider(provider, fallbackMessages),
+          activeScenario,
+          message
+        );
+        this.conversationHistory[userId].push({ role: 'assistant', content: parsed.message });
+        console.warn(`AI response served by ${provider.name}`);
+        return parsed;
+      } catch (err) {
+        console.warn(`${provider.name} failed, trying next provider: ${err.message}`);
       }
     }
 
