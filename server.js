@@ -265,10 +265,19 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('generateFeedback', (data) => {
+  socket.on('generateFeedback', async () => {
     if (!groqService) return;
     const feedback = groqService.generateFeedback(socket.userId);
-    socket.emit('feedbackGenerated', { feedback });
+    try {
+      const recommendation = await groqService.generateSkillGapRecommendation(socket.userId);
+      socket.emit('feedbackGenerated', { feedback, recommendation });
+    } catch (error) {
+      console.warn(`Skill-gap recommendation failed for user ${socket.userId}: ${error.message}`);
+      socket.emit('feedbackGenerated', {
+        feedback,
+        recommendationError: error.message
+      });
+    }
     socket.emit('userStats', groqService.getUserStats(socket.userId));
     groqService.clearScenario(socket.userId);
   });
