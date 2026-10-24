@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const scenarioCatalog = require('./scenarioCatalog');
+const SCENARIO_MASTERY_REQUIREMENT = Object.freeze({ attempts: 5, bestScore: 75 });
 
 class GroqService {
   constructor(apiKey) {
@@ -168,9 +169,24 @@ class GroqService {
     const averageScore = profile.completedScenarios
       ? Math.round(profile.totalScore / profile.completedScenarios)
       : 0;
-    const scenarioProgress = profile.scenarioProgress || {};
+    const scenarioProgress = Object.fromEntries(
+      Object.entries(profile.scenarioProgress || {}).map(([type, progress]) => {
+        const attempts = Number(progress.attempts) || 0;
+        const bestScore = Number(progress.bestScore) || 0;
+        const mastered = attempts >= SCENARIO_MASTERY_REQUIREMENT.attempts
+          && bestScore >= SCENARIO_MASTERY_REQUIREMENT.bestScore;
+        const mastery = mastered
+          ? 100
+          : Math.min(99, Math.round((
+            Math.min(100, (attempts / SCENARIO_MASTERY_REQUIREMENT.attempts) * 100)
+            + Math.min(100, (bestScore / SCENARIO_MASTERY_REQUIREMENT.bestScore) * 100)
+          ) / 2));
+        return [type, { ...progress, attempts, bestScore, mastery }];
+      })
+    );
     const masteredSkills = Object.values(scenarioProgress).filter(progress =>
-      progress.attempts >= 2 && progress.bestScore >= 75
+      progress.attempts >= SCENARIO_MASTERY_REQUIREMENT.attempts
+      && progress.bestScore >= SCENARIO_MASTERY_REQUIREMENT.bestScore
     ).length;
     const levels = [
       { name: 'Starter', comment: 'Start strong', threshold: 0 },
@@ -213,10 +229,11 @@ class GroqService {
           current: levelIndex === index
         })),
         masteredScenarios: Object.entries(scenarioProgress)
-          .filter(([, progress]) => progress.attempts >= 2 && progress.bestScore >= 75)
+          .filter(([, progress]) => progress.attempts >= SCENARIO_MASTERY_REQUIREMENT.attempts
+            && progress.bestScore >= SCENARIO_MASTERY_REQUIREMENT.bestScore)
           .map(([type]) => type),
         totalScenarios: Object.keys(this.scenarioCatalog).length,
-        masteryRequirement: { attempts: 2, bestScore: 75 },
+        masteryRequirement: SCENARIO_MASTERY_REQUIREMENT,
         hardScenariosUnlockAt: 'Advanced'
       }
     };
@@ -462,13 +479,18 @@ Evaluate the user's latest response against this scenario only. Refer to a speci
     profile.totalAttempts += 1;
     profile.totalScore += score;
     const previousProgress = profile.scenarioProgress[state.type] || {};
+    const attempts = (previousProgress.attempts || 0) + 1;
+    const bestScore = Math.max(previousProgress.bestScore || 0, score);
+    const mastered = attempts >= SCENARIO_MASTERY_REQUIREMENT.attempts
+      && bestScore >= SCENARIO_MASTERY_REQUIREMENT.bestScore;
+    const masteryProgress = Math.min(99, Math.round((
+      Math.min(100, (attempts / SCENARIO_MASTERY_REQUIREMENT.attempts) * 100)
+      + Math.min(100, (bestScore / SCENARIO_MASTERY_REQUIREMENT.bestScore) * 100)
+    ) / 2));
     profile.scenarioProgress[state.type] = {
-      attempts: (previousProgress.attempts || 0) + 1,
-      bestScore: Math.max(previousProgress.bestScore || 0, score),
-      mastery: Math.min(100, Math.max(
-        previousProgress.mastery || 0,
-        score >= 75 ? ((previousProgress.attempts || 0) + 1) * 50 : score
-      ))
+      attempts,
+      bestScore,
+      mastery: mastered ? 100 : masteryProgress
     };
 
     this.saveProfiles();
