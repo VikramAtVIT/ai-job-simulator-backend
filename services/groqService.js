@@ -201,42 +201,13 @@ class GroqService {
     };
   }
 
-  getSkillRecommendation(scenarioType, message) {
-    const normalizedMessage = message.toLowerCase();
-    const recommendations = {
-      manager_review: normalizedMessage.match(/\b(result|impact|metric|outcome|number|percentage)\b/)
-        ? 'Good evidence. Strengthen it further by connecting the result to a business or team outcome.'
-        : 'Skill gap: use a specific result with measurable impact, then explain what you learned.',
-      client_requirement: normalizedMessage.match(/\b(user|customer|acceptance|scope|constraint|priority|requirement)\b/)
-        ? 'Good discovery focus. Add a measurable acceptance criterion and confirm what is out of scope.'
-        : 'Skill gap: ask about the user problem, success measure, constraints, and must-have scope before solutioning.',
-      production_incident: normalizedMessage.match(/\b(impact|rollback|logs|metric|monitor|mitigat|communicat|customer)\b/)
-        ? 'Good incident thinking. Make the next action time-bound and assign clear communication ownership.'
-        : 'Skill gap: start with customer impact, evidence, containment, and an explicit communication owner.',
-      difficult_colleague: normalizedMessage.match(/\b(evidence|trade-off|tradeoff|listen|agree|test|experiment|impact)\b/)
-        ? 'Good collaborative framing. State the shared decision criterion before defending your preferred option.'
-        : 'Skill gap: acknowledge the concern, use evidence, and propose a small test against a shared goal.',
-      daily_standup: normalizedMessage.match(/\b(done|completed|today|next|block|help|yesterday)\b/)
-        ? 'Good standup structure. Keep the update concise and name the owner or next action for each blocker.'
-        : 'Skill gap: structure the update as done, next, and blockers that need team help.',
-      priority_conflict: normalizedMessage.match(/\b(impact|urgent|depend|customer|cost|delay|communicat|priorit)\b/)
-        ? 'Good prioritization logic. Make the trade-off explicit and communicate the revised expectation to the waiting stakeholder.'
-        : 'Skill gap: compare impact, urgency, dependencies, and cost of delay before communicating the decision.'
-    };
-    return recommendations[scenarioType] || recommendations.manager_review;
-  }
-
   parseAiResponse(rawMessage, scenarioType, message) {
     const cleanedMessage = typeof rawMessage === 'string' ? rawMessage.trim() : '';
     if (!cleanedMessage) throw new Error('The AI returned an empty response');
-    const recommendationMatch = cleanedMessage.match(/COACHING_NOTE:\s*(.+)$/im);
     const aiMessage = cleanedMessage.replace(/\s*COACHING_NOTE:\s*.+$/im, '').trim();
     if (!aiMessage) throw new Error('The AI response did not contain a message');
     return {
-      message: aiMessage,
-      recommendation: recommendationMatch
-        ? recommendationMatch[1].trim()
-        : this.getSkillRecommendation(scenarioType, message)
+      message: aiMessage
     };
   }
 
@@ -329,7 +300,7 @@ class GroqService {
               content: `You are ${profile.role} in a live workplace simulation.
 Scenario goal: ${profile.goal}
 Scenario coaching focus: ${profile.style}
-Evaluate the user's latest response against this scenario only. Refer to specific details they said, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill. End with a separate line in this exact format: COACHING_NOTE: [one concise recommendation for the user's biggest skill gap].`
+Evaluate the user's latest response against this scenario only. Refer to specific details they said, challenge one weak assumption when useful, and move the simulation forward with a realistic stakeholder reaction. Do not give generic interview advice, switch topics, or mention that you are an AI. Respond in 2-4 natural sentences and ask exactly one focused follow-up question that tests the scenario skill.`
             },
             ...this.conversationHistory[userId]
           ]
@@ -351,7 +322,7 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
         const fallbackMessages = [
           {
             role: 'system',
-            content: `Continue this workplace simulation as the scenario stakeholder. Stay focused on ${activeScenario}. Respond in 2-4 natural sentences, ask exactly one focused follow-up question, and end with COACHING_NOTE: followed by one concise skill-gap recommendation.`
+            content: `Continue this workplace simulation as the scenario stakeholder. Stay focused on ${activeScenario}. Respond in 2-4 natural sentences and ask exactly one focused follow-up question.`
           },
           ...this.conversationHistory[userId]
         ];
@@ -396,8 +367,7 @@ Evaluate the user's latest response against this scenario only. Refer to specifi
     };
     const responses = mockResponses[activeScenario] || mockResponses.manager_review;
     return {
-      message: responses[((state?.turnCount || 1) - 1) % responses.length],
-      recommendation: this.getSkillRecommendation(activeScenario, message)
+      message: responses[((state?.turnCount || 1) - 1) % responses.length]
     };
   }
 
