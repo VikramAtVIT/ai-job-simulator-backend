@@ -118,12 +118,12 @@ io.on('connection', (socket) => {
 
     groqService.initializeScenario(socket.userId, scenarioType);
     const scenarioIntros = {
-      manager_review: 'Your manager asks how your quarter has gone and what support would help you grow.',
-      client_requirement: 'A client presents a new feature request and wants a realistic delivery plan.',
-      production_incident: 'An important service is failing in production and the team needs your first response.',
-      difficult_colleague: 'A teammate challenges your approach and asks you to defend your technical decision.',
-      daily_standup: 'Your team is starting its daily standup. Share your progress, today\'s goal, and any blocker.',
-      priority_conflict: 'Two stakeholders need urgent work at the same time. Explain how you would prioritize and align them.'
+      manager_review: 'Welcome to your performance review. I am your manager, and we will discuss your recent achievements, challenges, and growth goals. Start by summarizing one result you are proud of and the impact it had.',
+      client_requirement: 'Welcome to the client requirements discussion. I am the client, and I need your help shaping a feature with a tight deadline. Start by asking the most important question you need answered before proposing a solution.',
+      production_incident: 'You are now leading a live production incident. Customer requests are failing and the team is waiting for your direction. Start by explaining how you would assess impact and stabilize the service safely.',
+      difficult_colleague: 'Welcome to a challenging technical discussion. I am a teammate who disagrees with your approach and wants evidence before moving forward. Explain your position, then show how you would keep the conversation constructive.',
+      daily_standup: 'Welcome to today\'s standup. Give a concise update covering what you completed, what you will do next, and any blocker that needs the team\'s help.',
+      priority_conflict: 'You are handling two urgent stakeholder requests with limited capacity. Start by explaining how you would compare impact, urgency, and dependencies before choosing what comes first.'
     };
 
     socket.emit('scenarioStarted', {
