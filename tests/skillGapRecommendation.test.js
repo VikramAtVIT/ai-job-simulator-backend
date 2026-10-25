@@ -74,6 +74,52 @@ test('recommendations receive scenario-specific context for the dashboard scenar
   }
 });
 
+test('every catalog scenario receives grounded fallback guidance when all AI providers are unavailable', async () => {
+  const { service } = makeService();
+  service.groq = null;
+  service.fallbackProviders = [];
+  const scenarioTypes = Object.keys(service.scenarioCatalog);
+
+  for (const type of scenarioTypes) {
+    const userId = `fallback-${type}`;
+    const scenario = service.scenarioCatalog[type];
+    const answer = `For ${scenario.goal}, I would confirm the evidence, communicate the decision, and measure the result.`;
+    service.initializeScenario(userId, type);
+    service.conversationHistory[userId].push({ role: 'user', content: answer });
+    service.userScenarioState[userId].turnCount = 1;
+
+    const recommendation = await service.generateSkillGapRecommendation(userId);
+
+    assert.equal(recommendation.source, 'scenario_fallback', type);
+    assert.ok(recommendation.skill.length > 0, type);
+    assert.ok(recommendation.evidence.includes('confirm the evidence'), type);
+    assert.ok(recommendation.nextStep.toLowerCase().includes(scenario.focus.slice(0, 25).toLowerCase()), type);
+  }
+});
+
+test('scenario-grounded guidance is returned when configured AI providers fail', async () => {
+  const { service } = makeService();
+  const userId = 'provider-failure-fallback';
+  const scenario = service.scenarioCatalog.daily_standup;
+  service.groq = null;
+  service.fallbackProviders = [{ name: 'Unavailable provider' }];
+  service.callFallbackProvider = async () => {
+    throw new Error('Provider request failed');
+  };
+  service.initializeScenario(userId, 'daily_standup');
+  service.conversationHistory[userId].push({
+    role: 'user',
+    content: 'I completed the report and will share the status update by noon.'
+  });
+  service.userScenarioState[userId].turnCount = 1;
+
+  const recommendation = await service.generateSkillGapRecommendation(userId);
+
+  assert.equal(recommendation.source, 'scenario_fallback');
+  assert.equal(recommendation.skill, 'Concise Communication');
+  assert.ok(recommendation.nextStep.toLowerCase().includes(scenario.focus.slice(0, 25).toLowerCase()));
+});
+
 test('post-assessment recommendations use the latest rubric instead of the cached pre-assessment result', async () => {
   const { service, requests } = makeService();
   const userId = 'assessment-recommendation-test';
@@ -100,9 +146,10 @@ test('post-assessment recommendations use the latest rubric instead of the cache
   await service.generateFeedback(userId);
   assert.equal(service.userScenarioState[userId].latestSkillGapRecommendation, null);
 
+  service.groq = null;
+  service.fallbackProviders = [];
   await service.generateSkillGapRecommendation(userId);
-  assert.equal(requests.length, 3);
-  assert.match(requests[2][0].content, /lowest relevant rubric/);
-  assert.equal(JSON.parse(requests[2][1].content).assessment.rubrics['Problem Solving'], 9);
-  assert.equal(JSON.parse(requests[2][1].content).scenario, scenario.name);
+  assert.equal(requests.length, 2);
+  assert.equal(service.userScenarioState[userId].latestSkillGapRecommendation.recommendation.source, 'scenario_fallback');
+  assert.match(service.userScenarioState[userId].latestSkillGapRecommendation.recommendation.evidence, /Problem Solving \(9\/25\)/);
 });

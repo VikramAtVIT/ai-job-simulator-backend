@@ -567,7 +567,8 @@ Evaluate the user's latest response against this scenario only. Refer to a speci
       return {
         skill: skill.slice(0, 80),
         evidence: evidence.slice(0, 280),
-        nextStep: nextStep.slice(0, 280)
+        nextStep: nextStep.slice(0, 280),
+        source: recommendation.source === 'scenario_fallback' ? 'scenario_fallback' : 'ai'
       };
     };
 
@@ -600,7 +601,35 @@ Evaluate the user's latest response against this scenario only. Refer to a speci
     }
 
     if (!recommendation) {
-      throw new Error('AI skill-gap analysis is unavailable. Please try again later.');
+      const answer = answers[answers.length - 1].replace(/\s+/g, ' ').trim();
+      const evidenceSnippet = answer.length > 120
+        ? `...${answer.slice(-117).replace(/^\S*\s/, '')}`
+        : answer;
+      const criterion = scenario.assessment
+        .replace(/^Assess\s+/i, '')
+        .replace(/[.!?]+$/, '')
+        .split(/,\s*|\s+and\s+/i)[0]
+        .trim();
+      const skill = criterion
+        ? criterion.replace(/\b\w/g, character => character.toUpperCase())
+        : 'Scenario-specific communication';
+      const rubrics = state.latestAssessment?.rubrics;
+      const weakestRubric = rubrics
+        ? Object.entries(rubrics)
+          .filter(([, score]) => Number.isFinite(score))
+          .sort((left, right) => left[1] - right[1])[0]
+        : null;
+      const rubricEvidence = weakestRubric
+        ? ` Your lowest rubric was ${weakestRubric[0]} (${weakestRubric[1]}/25).`
+        : '';
+      const focus = scenario.focus.replace(/[.!?]+$/, '').toLowerCase();
+      recommendation = parseRecommendation(JSON.stringify({
+        skill,
+        evidence: `Your response included "${evidenceSnippet}".${rubricEvidence} Strengthen ${skill.toLowerCase()} with a specific example or measure.`,
+        nextStep: `In your next response, practice ${focus}. Tie your action to a measurable outcome for this goal: ${scenario.goal}.`,
+        source: 'scenario_fallback'
+      }));
+      console.warn(`Skill-gap analysis served by scenario-grounded fallback for ${state.type}`);
     }
     if (this.userScenarioState[userId] !== state || state.turnCount !== analyzedTurnCount) {
       return null;
