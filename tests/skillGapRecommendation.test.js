@@ -74,6 +74,34 @@ test('recommendations receive scenario-specific context for the dashboard scenar
   }
 });
 
+test('AI recommendations are compacted to short display-ready fields', async () => {
+  const { service } = makeService();
+  const userId = 'compact-recommendation-test';
+  service.initializeScenario(userId, 'daily_standup');
+  service.conversationHistory[userId].push({ role: 'user', content: 'I will share the specific result today.' });
+  service.userScenarioState[userId].turnCount = 1;
+  service.groq.chat.completions.create = async () => ({
+    choices: [{
+      message: {
+        content: JSON.stringify({
+          skill: 'Clear concise stakeholder communication and expectation setting',
+          evidence: 'You mentioned that you would share an update, but did not specify what outcome the team should expect or when.',
+          nextStep: 'In your next update, state the concrete result, identify any blocker, and give a clear time for your next progress update.'
+        })
+      }
+    }]
+  });
+
+  const recommendation = await service.generateSkillGapRecommendation(userId);
+
+  assert.ok(recommendation.skill.length <= 48);
+  assert.ok(recommendation.skill.split(/\s+/).length <= 5);
+  assert.ok(recommendation.evidence.length <= 120);
+  assert.ok(recommendation.evidence.split(/\s+/).length <= 14);
+  assert.ok(recommendation.nextStep.length <= 130);
+  assert.ok(recommendation.nextStep.split(/\s+/).length <= 16);
+});
+
 test('every catalog scenario receives grounded fallback guidance when all AI providers are unavailable', async () => {
   const { service } = makeService();
   service.groq = null;
@@ -92,8 +120,9 @@ test('every catalog scenario receives grounded fallback guidance when all AI pro
 
     assert.equal(recommendation.source, 'scenario_fallback', type);
     assert.ok(recommendation.skill.length > 0, type);
-    assert.ok(recommendation.evidence.includes('confirm the evidence'), type);
-    assert.ok(recommendation.nextStep.toLowerCase().includes(scenario.focus.slice(0, 25).toLowerCase()), type);
+    assert.ok(recommendation.evidence.includes('measure the result'), type);
+    const focusOpening = scenario.focus.split(',')[0].slice(0, 25).toLowerCase();
+    assert.ok(recommendation.nextStep.toLowerCase().includes(focusOpening), type);
   }
 });
 
