@@ -35,11 +35,19 @@ class GroqService {
     }
   }
 
+  normalizeText(value, fallback = '') {
+    if (typeof value !== 'string') return fallback;
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+
   loadProfiles() {
     const profilesPath = path.join(__dirname, '..', 'data', 'users.json');
     try {
       const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
-      return profiles;
+      return profiles && typeof profiles === 'object' && !Array.isArray(profiles)
+        ? profiles
+        : {};
     } catch (error) {
       return {
         user123: {
@@ -69,7 +77,10 @@ class GroqService {
   loadAccounts() {
     const accountsPath = path.join(__dirname, '..', 'data', 'accounts.json');
     try {
-      return JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
+      const accounts = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
+      return accounts && typeof accounts === 'object' && !Array.isArray(accounts)
+        ? accounts
+        : {};
     } catch (error) {
       return {};
     }
@@ -87,33 +98,48 @@ class GroqService {
   }
 
   verifyPassword(password, storedHash) {
+    if (typeof password !== 'string' || typeof storedHash !== 'string' || !storedHash.includes(':')) {
+      return false;
+    }
+
     const [salt, expectedHash] = storedHash.split(':');
-    const actualHash = crypto.scryptSync(password, salt, 64).toString('hex');
-    return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+    if (!salt || !expectedHash) return false;
+
+    try {
+      const actualHash = crypto.scryptSync(password, salt, 64).toString('hex');
+      return crypto.timingSafeEqual(
+        Buffer.from(actualHash, 'hex'),
+        Buffer.from(expectedHash, 'hex')
+      );
+    } catch (error) {
+      return false;
+    }
   }
 
   createAccount(name, email, password) {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (this.accounts[normalizedEmail]) return null;
+    const normalizedEmail = this.normalizeText(email).toLowerCase();
+    const normalizedPassword = typeof password === 'string' ? password : '';
+    if (!normalizedEmail || !normalizedPassword || this.accounts[normalizedEmail]) return null;
     const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     this.accounts[normalizedEmail] = {
       userId,
       email: normalizedEmail,
-      passwordHash: this.hashPassword(password)
+      passwordHash: this.hashPassword(normalizedPassword)
     };
-    this.createUserProfile(userId, name, normalizedEmail);
+    this.createUserProfile(userId, this.normalizeText(name, 'User'), normalizedEmail);
     this.saveAccounts();
     return { userId, email: normalizedEmail };
   }
 
   authenticate(email, password) {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail === 'demo@codeapex.com' && password === 'demo123') {
+    const normalizedEmail = this.normalizeText(email).toLowerCase();
+    const normalizedPassword = typeof password === 'string' ? password : '';
+    if (normalizedEmail === 'demo@codeapex.com' && normalizedPassword === 'demo123') {
       return { userId: 'user123', email: normalizedEmail, name: 'Demo User' };
     }
 
     const account = this.accounts[normalizedEmail];
-    if (!account || !this.verifyPassword(password, account.passwordHash)) return null;
+    if (!account || !this.verifyPassword(normalizedPassword, account.passwordHash)) return null;
     return {
       userId: account.userId,
       email: account.email,
@@ -122,7 +148,9 @@ class GroqService {
   }
 
   findOrCreateGoogleAccount(name, email) {
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = this.normalizeText(email).toLowerCase();
+    if (!normalizedEmail) return null;
+
     const existing = this.accounts[normalizedEmail];
     if (existing) {
       return {
@@ -133,7 +161,7 @@ class GroqService {
     }
 
     const account = this.createAccount(
-      name || normalizedEmail.split('@')[0],
+      this.normalizeText(name, normalizedEmail.split('@')[0]),
       normalizedEmail,
       crypto.randomBytes(32).toString('hex')
     );
@@ -141,7 +169,7 @@ class GroqService {
     return {
       userId: account.userId,
       email: account.email,
-      name: name || normalizedEmail.split('@')[0]
+      name: this.normalizeText(name, normalizedEmail.split('@')[0])
     };
   }
 
@@ -253,7 +281,7 @@ class GroqService {
     const response = await fetch(provider.url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${provider.key}`,
+        ...(provider.key ? { Authorization: `Bearer ${provider.key}` } : {}),
         'Content-Type': 'application/json',
         ...(provider.name === 'OpenRouter' ? {
           'HTTP-Referer': process.env.FRONTEND_PUBLIC_URL || 'https://ai-job-simulator-frontend.vercel.app',
@@ -292,11 +320,16 @@ class GroqService {
       this.conversationHistory[userId] = [];
     }
 
+    const normalizedMessage = this.normalizeText(message);
+    if (!normalizedMessage) {
+      throw new Error('Message cannot be empty.');
+    }
+
     const state = this.userScenarioState[userId];
     const activeScenario = state ? state.type : scenarioType;
     const profile = this.scenarioCatalog[activeScenario] || this.scenarioCatalog.manager_review;
 
-    this.conversationHistory[userId].push({ role: 'user', content: message });
+    this.conversationHistory[userId].push({ role: 'user', content: normalizedMessage });
     if (state) {
       state.turnCount += 1;
       state.latestSkillGapRecommendation = null;
@@ -559,7 +592,8 @@ Evaluate the user's latest response against this scenario only. Refer to a speci
         throw new Error('The AI returned an invalid skill-gap recommendation');
       }
       const compact = (value, wordLimit, charLimit) => {
-        const words = value.split(/\s+/).slice(0, wordLimit);
+        const safeValue = typeof value === 'string' ? value : String(value ?? '');
+        const words = safeValue.split(/\s+/).slice(0, wordLimit);
         let text = words.join(' ');
         if (text.length > charLimit) {
           text = text.slice(0, charLimit);
@@ -569,14 +603,14 @@ Evaluate the user's latest response against this scenario only. Refer to a speci
         }
         return text;
       };
-      const skill = typeof recommendation.skill === 'string'
-        ? compact(recommendation.skill.trim(), 5, 48)
+      const skill = typeof recommendation.skill === 'string' || recommendation.skill !== undefined
+        ? compact(recommendation.skill, 5, 48)
         : '';
-      const evidence = typeof recommendation.evidence === 'string'
-        ? compact(recommendation.evidence.trim(), 14, 120)
+      const evidence = typeof recommendation.evidence === 'string' || recommendation.evidence !== undefined
+        ? compact(recommendation.evidence, 14, 120)
         : '';
-      const nextStep = typeof recommendation.nextStep === 'string'
-        ? compact(recommendation.nextStep.trim(), 16, 130)
+      const nextStep = typeof recommendation.nextStep === 'string' || recommendation.nextStep !== undefined
+        ? compact(recommendation.nextStep, 16, 130)
         : '';
       if (!skill || !evidence || !nextStep) {
         throw new Error('The AI returned an incomplete skill-gap recommendation');
