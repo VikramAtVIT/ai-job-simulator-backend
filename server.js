@@ -141,6 +141,7 @@ async function emitSkillGapRecommendation(socket) {
 const clerkAuthorizedParties = process.env.CLERK_AUTHORIZED_PARTIES
   ? process.env.CLERK_AUTHORIZED_PARTIES.split(',').map(party => party.trim()).filter(Boolean)
   : [
+    'https://ai-job-simulator-frontend.vercel.app',
     `http://localhost:${process.env.PORT || 3000}`,
     `http://127.0.0.1:${process.env.PORT || 3000}`
   ];
