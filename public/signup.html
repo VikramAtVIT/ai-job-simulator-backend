@@ -87,69 +87,34 @@
 <body class="auth-page">
     <div class="signup-container auth-card">
         <h1>Join AI Job Simulator</h1>
-        <div class="error-message" id="errorMessage"></div>
-        <form id="signupForm" onsubmit="handleSignup(event)">
-            <div class="form-group">
-                <label for="name">Full Name</label>
-                <input type="text" id="name" required placeholder="Your name">
-            </div>
-            <div class="form-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" required placeholder="your@email.com">
-            </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" required placeholder="At least 6 characters">
-            </div>
-            <button type="submit" class="btn-signup">Sign Up</button>
-        </form>
+        <div id="clerk-sign-up"></div>
+        <p id="auth-status" class="login-link" role="status">Loading sign-up options...</p>
         <div class="login-link">
             Already have an account? <a href="login.html">Login</a>
         </div>
     </div>
 
+    <script src="./clerk-auth.js"></script>
     <script>
-        const API_URL = '';
-
-        async function handleSignup(event) {
-            event.preventDefault();
-
-            const name = document.getElementById('name').value;
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            const errorMessage = document.getElementById('errorMessage');
-
-            try {
-                const response = await fetch(`${API_URL}/api/signup`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, email, password })
-                });
-
-                const contentType = response.headers.get('content-type') || '';
-                const data = contentType.includes('application/json')
-                    ? await response.json()
-                    : { message: 'The server returned an unexpected response. Please restart the backend.' };
-
-                if (data.success) {
-                    localStorage.setItem('authToken', data.token);
-                    localStorage.setItem('currentUser', JSON.stringify(data.user || {
-                        id: data.userId,
-                        email: data.email,
-                        name
-                    }));
-
-                    window.location.href = './index.html';
-                } else {
-                    errorMessage.textContent = data.message || 'Sign up failed';
-                    errorMessage.style.display = 'block';
-                }
-            } catch (err) {
-                console.error('Signup error:', err);
-                errorMessage.textContent = 'Network error: ' + err.message;
-                errorMessage.style.display = 'block';
+        const authStatus = document.getElementById('auth-status');
+        window.clerkReady.then(clerk => {
+            if (!clerk) {
+                authStatus.textContent = 'Clerk is not configured. Add the Clerk API keys to the backend environment, then restart the server.';
+                return;
             }
-        }
+            if (clerk.isSignedIn) {
+                window.location.replace('./index.html');
+                return;
+            }
+            clerk.mountSignUp(document.getElementById('clerk-sign-up'), {
+                forceRedirectUrl: '/index.html',
+                fallbackRedirectUrl: '/index.html'
+            });
+            authStatus.textContent = '';
+        }).catch(error => {
+            console.error('Clerk sign-up could not be loaded:', error);
+            authStatus.textContent = error.message;
+        });
     </script>
 </body>
 </html>

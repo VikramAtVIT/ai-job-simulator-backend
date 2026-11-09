@@ -10,39 +10,32 @@
     <span class="eyebrow">AI Job Simulator</span>
     <h1>Welcome back</h1>
     <p class="subtitle">Continue building your workplace confidence.</p>
-    <form onsubmit="handleLogin(event)">
-      <label for="email">Email address</label>
-      <input type="email" id="email" placeholder="demo@codeapex.com" required>
-      <label for="password">Password</label>
-      <input type="password" id="password" placeholder="demo123" required>
-      <button class="primary-button" type="submit">Sign in</button>
-    </form>
+    <div id="clerk-sign-in"></div>
+    <p id="auth-status" class="subtitle" role="status">Loading sign-in options...</p>
     <a class="link" href="signup.html">Create a new account</a>
   </div>
   </div>
+  <script src="./clerk-auth.js"></script>
   <script>
-    const API_URL = '';
-    async function handleLogin(e) {
-      e.preventDefault();
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      const res = await fetch(`${API_URL}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const contentType = res.headers.get('content-type') || '';
-      const data = contentType.includes('application/json')
-        ? await res.json()
-        : { message: 'The server returned an unexpected response. Please restart the backend.' };
-      if (data.success) {
-        localStorage.setItem('authToken', data.token);
-        localStorage.setItem('currentUser', JSON.stringify(data.user || { id: data.userId, email }));
-        window.location.href = './index.html';
-      } else {
-        alert(data.message || data.error || 'Login failed');
+    const authStatus = document.getElementById('auth-status');
+    window.clerkReady.then(clerk => {
+      if (!clerk) {
+        authStatus.textContent = 'Clerk is not configured. Add the Clerk API keys to the backend environment, then restart the server.';
+        return;
       }
-    }
+      if (clerk.isSignedIn) {
+        window.location.replace('./index.html');
+        return;
+      }
+      clerk.mountSignIn(document.getElementById('clerk-sign-in'), {
+        forceRedirectUrl: '/index.html',
+        fallbackRedirectUrl: '/index.html'
+      });
+      authStatus.textContent = '';
+    }).catch(error => {
+      console.error('Clerk sign-in could not be loaded:', error);
+      authStatus.textContent = error.message;
+    });
   </script>
 </body>
 </html>

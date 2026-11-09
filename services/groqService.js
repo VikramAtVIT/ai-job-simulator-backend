@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const scenarioCatalog = require('./scenarioCatalog');
 const SCENARIO_MASTERY_REQUIREMENT = Object.freeze({ attempts: 5, bestScore: 75 });
 
@@ -11,7 +10,6 @@ class GroqService {
     this.userScenarioState = {};
     this.scenarioCatalog = scenarioCatalog;
     this.userProfiles = this.loadProfiles();
-    this.accounts = this.loadAccounts();
     this.fallbackProviders = [
       process.env.OPENROUTER_API_KEY && {
         name: 'OpenRouter',
@@ -74,105 +72,6 @@ class GroqService {
     fs.writeFileSync(profilesPath, JSON.stringify(this.userProfiles, null, 2));
   }
 
-  loadAccounts() {
-    const accountsPath = path.join(__dirname, '..', 'data', 'accounts.json');
-    try {
-      const accounts = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
-      return accounts && typeof accounts === 'object' && !Array.isArray(accounts)
-        ? accounts
-        : {};
-    } catch (error) {
-      return {};
-    }
-  }
-
-  saveAccounts() {
-    const accountsPath = path.join(__dirname, '..', 'data', 'accounts.json');
-    fs.mkdirSync(path.dirname(accountsPath), { recursive: true });
-    fs.writeFileSync(accountsPath, JSON.stringify(this.accounts, null, 2));
-  }
-
-  hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-    return `${salt}:${hash}`;
-  }
-
-  verifyPassword(password, storedHash) {
-    if (typeof password !== 'string' || typeof storedHash !== 'string' || !storedHash.includes(':')) {
-      return false;
-    }
-
-    const [salt, expectedHash] = storedHash.split(':');
-    if (!salt || !expectedHash) return false;
-
-    try {
-      const actualHash = crypto.scryptSync(password, salt, 64).toString('hex');
-      return crypto.timingSafeEqual(
-        Buffer.from(actualHash, 'hex'),
-        Buffer.from(expectedHash, 'hex')
-      );
-    } catch (error) {
-      return false;
-    }
-  }
-
-  createAccount(name, email, password) {
-    const normalizedEmail = this.normalizeText(email).toLowerCase();
-    const normalizedPassword = typeof password === 'string' ? password : '';
-    if (!normalizedEmail || !normalizedPassword || this.accounts[normalizedEmail]) return null;
-    const userId = `user_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    this.accounts[normalizedEmail] = {
-      userId,
-      email: normalizedEmail,
-      passwordHash: this.hashPassword(normalizedPassword)
-    };
-    this.createUserProfile(userId, this.normalizeText(name, 'User'), normalizedEmail);
-    this.saveAccounts();
-    return { userId, email: normalizedEmail };
-  }
-
-  authenticate(email, password) {
-    const normalizedEmail = this.normalizeText(email).toLowerCase();
-    const normalizedPassword = typeof password === 'string' ? password : '';
-    if (normalizedEmail === 'demo@codeapex.com' && normalizedPassword === 'demo123') {
-      return { userId: 'user123', email: normalizedEmail, name: 'Demo User' };
-    }
-
-    const account = this.accounts[normalizedEmail];
-    if (!account || !this.verifyPassword(normalizedPassword, account.passwordHash)) return null;
-    return {
-      userId: account.userId,
-      email: account.email,
-      name: this.getUserProfile(account.userId).name
-    };
-  }
-
-  findOrCreateGoogleAccount(name, email) {
-    const normalizedEmail = this.normalizeText(email).toLowerCase();
-    if (!normalizedEmail) return null;
-
-    const existing = this.accounts[normalizedEmail];
-    if (existing) {
-      return {
-        userId: existing.userId,
-        email: existing.email,
-        name: this.getUserProfile(existing.userId).name
-      };
-    }
-
-    const account = this.createAccount(
-      this.normalizeText(name, normalizedEmail.split('@')[0]),
-      normalizedEmail,
-      crypto.randomBytes(32).toString('hex')
-    );
-    if (!account) return null;
-    return {
-      userId: account.userId,
-      email: account.email,
-      name: this.normalizeText(name, normalizedEmail.split('@')[0])
-    };
-  }
-
   createUserProfile(userId, name, email) {
     if (this.userProfiles[userId]) return this.userProfiles[userId];
     this.userProfiles[userId] = {
@@ -190,6 +89,51 @@ class GroqService {
 
   getUserProfile(userId) {
     return this.userProfiles[userId] || this.createUserProfile(userId, 'User', '');
+  }
+
+  getOrCreateClerkProfile(userId, { email, emailVerified, name } = {}) {
+    if (typeof userId !== 'string' || !userId) {
+      throw new Error('A Clerk user ID is required to load a profile.');
+    }
+
+    const normalizedEmail = this.normalizeText(email).toLowerCase();
+    const normalizedName = this.normalizeText(name, 'User');
+    const existingProfile = this.userProfiles[userId];
+    if (existingProfile) {
+      let profileChanged = false;
+      if (emailVerified && normalizedEmail && !existingProfile.email) {
+        existingProfile.email = normalizedEmail;
+        profileChanged = true;
+      }
+      if (existingProfile.name === 'User' && normalizedName !== 'User') {
+        existingProfile.name = normalizedName;
+        profileChanged = true;
+      }
+      if (profileChanged) this.saveProfiles();
+      return existingProfile;
+    }
+
+    const matchingProfiles = emailVerified && normalizedEmail
+      ? Object.entries(this.userProfiles).filter(([, profile]) =>
+        !profile.migratedTo
+        && this.normalizeText(profile.email).toLowerCase() === normalizedEmail
+      )
+      : [];
+    if (matchingProfiles.length === 1) {
+      const [legacyUserId, legacyProfile] = matchingProfiles[0];
+      legacyProfile.migratedTo = userId;
+      this.userProfiles[userId] = {
+        ...legacyProfile,
+        userId,
+        name: normalizedName === 'User' ? legacyProfile.name : normalizedName,
+        email: normalizedEmail,
+        ...(legacyUserId === 'user123' || legacyProfile.legacyDemo ? { legacyDemo: true } : {})
+      };
+      this.saveProfiles();
+      return this.userProfiles[userId];
+    }
+
+    return this.createUserProfile(userId, normalizedName, normalizedEmail);
   }
 
   getUserStats(userId) {
@@ -225,7 +169,7 @@ class GroqService {
       { name: 'Pro', comment: 'Lead confidently', threshold: 10 }
     ];
     const level = [...levels].reverse().find(item => masteredSkills >= item.threshold) || levels[0];
-    const legacyDemo = userId === 'user123';
+    const legacyDemo = userId === 'user123' || profile.legacyDemo === true;
     const currentLevel = legacyDemo ? 'Pro' : level.name;
     const levelComment = legacyDemo ? 'Lead confidently' : level.comment;
     const levelIndex = levels.findIndex(item => item.name === currentLevel);

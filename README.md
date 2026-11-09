@@ -20,11 +20,26 @@ Interactive AI characters simulate real workplace scenarios:
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js v16+
-- Supabase account
+- Node.js v20.9+
+- Clerk application
 - Groq API key
 
 ### Installation
 
-```bash
+```sh
 npm install
+npm start
+```
+
+The site is served at `http://localhost:3000`.
+
+### Clerk sign-in
+
+1. Create a Clerk application in the [Clerk Dashboard](https://dashboard.clerk.com/).
+2. In **User & authentication**, enable Google and GitHub as social connections.
+3. Copy the Clerk publishable and secret keys into your local `.env` as `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`. Never commit these keys.
+4. Optionally add the PEM JWT public key from the Clerk Dashboard as `CLERK_JWT_KEY`. It is used for networkless Socket.IO token verification; if omitted, verification uses Clerk's Backend API.
+5. Set `CLERK_AUTHORIZED_PARTIES` to the comma-separated origin(s) that serve the frontend. For local development, use `http://localhost:3000`.
+6. Restart the server and open `http://localhost:3000/login.html`. The Clerk sign-in and sign-up components display the social providers enabled for the application.
+
+The backend verifies Clerk sessions for its profile endpoint and Socket.IO connections. Old local-password sessions are not carried over. On first sign-in, a verified email matching exactly one existing profile preserves its scenario statistics; email-less or ambiguous legacy profiles are not automatically linked.

@@ -3,11 +3,23 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 require('dotenv').config();
+if (!process.env.CLERK_PUBLISHABLE_KEY && process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+  process.env.CLERK_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+}
+const { clerkClient, clerkMiddleware, getAuth } = require('@clerk/express');
+const { verifyToken } = require('@clerk/backend');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: '*' } });
-const googleAuthStates = new Map();
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+  || process.env.CLERK_PUBLISHABLE_KEY;
+const clerkJwtKey = process.env.CLERK_JWT_KEY
+  ? process.env.CLERK_JWT_KEY.replace(/\\n/g, '\n')
+  : undefined;
+const clerkConfigured = Boolean(
+  clerkPublishableKey && process.env.CLERK_SECRET_KEY
+);
 
 let groqService = null;
 
@@ -40,6 +52,7 @@ app.use((req, res, next) => {
 
   next();
 });
+if (clerkConfigured) app.use(clerkMiddleware());
 app.use('/pages', express.static(path.join(__dirname, 'pages')));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -47,121 +60,65 @@ app.get('/', (req, res) => res.redirect('/login.html'));
 app.get('/login.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.post(['/api/login', '/api/auth/login'], (req, res) => {
-  const { email, password } = req.body;
-  const account = groqService.authenticate(email || '', password || '');
-  if (account) {
-    res.json({
-      success: true,
-      userId: account.userId,
-      email: account.email,
-      user: { id: account.userId, email: account.email, name: account.name },
-      token: `token_${account.userId}`
-    });
-  } else {
-    res.status(401).json({
-      success: false,
-      error: 'Invalid credentials. Try: demo@codeapex.com / demo123',
-      message: 'Invalid credentials. Try: demo@codeapex.com / demo123'
-    });
-  }
-});
-
-app.post(['/api/signup', '/api/auth/signup'], (req, res) => {
-  const { email, password, name } = req.body;
-  if (!email || !password || !name) {
-    return res.status(400).json({
-      success: false,
-      error: 'Name, email, and password are required',
-      message: 'Name, email, and password are required'
-    });
+function requireClerkAuth(req, res, next) {
+  if (!clerkConfigured) {
+    res.status(503).json({ error: 'Clerk authentication is not configured on this server.' });
+    return;
   }
 
-  const account = groqService.createAccount(name, email, password);
-  if (!account) {
-    return res.status(409).json({
-      success: false,
-      error: 'An account with this email already exists',
-      message: 'An account with this email already exists'
-    });
+  const auth = getAuth(req);
+  if (!auth.isAuthenticated || !auth.userId) {
+    res.status(401).json({ error: 'Sign in with Clerk to continue.' });
+    return;
   }
+
+  req.clerkUserId = auth.userId;
+  next();
+}
+
+async function loadClerkProfile(userId) {
+  const user = await clerkClient.users.getUser(userId);
+  const primaryEmail = user.emailAddresses.find(
+    emailAddress => emailAddress.id === user.primaryEmailAddressId
+  );
+  const email = primaryEmail ? primaryEmail.emailAddress : '';
+  const name = user.fullName
+    || [user.firstName, user.lastName].filter(Boolean).join(' ')
+    || email
+    || 'User';
+  return groqService.getOrCreateClerkProfile(userId, {
+    email,
+    emailVerified: Boolean(primaryEmail && primaryEmail.verification?.status === 'verified'),
+    name
+  });
+}
+
+app.get('/api/auth/config', (req, res) => {
   res.json({
-    success: true,
-    userId: account.userId,
-    email: account.email,
-    user: { id: account.userId, email: account.email, name },
-    token: `token_${account.userId}`
+    configured: clerkConfigured,
+    publishableKey: clerkConfigured ? clerkPublishableKey : null
   });
 });
 
-  app.get('/api/auth/google/url', (req, res) => {
-      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-        res.status(503).json({ success: false, message: 'Google sign-in is not configured on this server yet.' });
-        return;
-      }
-
-      const state = require('crypto').randomBytes(24).toString('hex');
-      googleAuthStates.set(state, Date.now());
-      const callbackUrl = `${process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`}/api/auth/google/callback`;
-      const params = new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        redirect_uri: callbackUrl,
-        response_type: 'code',
-        scope: 'openid email profile',
-        access_type: 'offline',
-        state
-      });
-      res.json({ success: true, url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
+app.get('/api/auth/session', requireClerkAuth, async (req, res) => {
+  try {
+    const profile = await loadClerkProfile(req.clerkUserId);
+    res.json({
+      user: { id: req.clerkUserId, email: profile.email, name: profile.name },
+      stats: groqService.getUserStats(req.clerkUserId)
     });
+  } catch (error) {
+    console.error('Clerk profile lookup failed:', error.message);
+    res.status(502).json({ error: 'Unable to load your Clerk profile. Please try again.' });
+  }
+});
 
-  app.get('/api/auth/google/callback', async (req, res) => {
-      const { code, state } = req.query;
-      const stateCreatedAt = googleAuthStates.get(state);
-      googleAuthStates.delete(state);
-      if (!code || !stateCreatedAt || Date.now() - stateCreatedAt > 10 * 60 * 1000) {
-        res.status(400).send('Google sign-in could not be verified. Please try again.');
-        return;
-      }
-
-      try {
-        const callbackUrl = `${process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`}/api/auth/google/callback`;
-        const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            code,
-            client_id: process.env.GOOGLE_CLIENT_ID,
-            client_secret: process.env.GOOGLE_CLIENT_SECRET,
-            redirect_uri: callbackUrl,
-            grant_type: 'authorization_code'
-          })
-        });
-        const tokens = await tokenResponse.json();
-        if (!tokenResponse.ok || !tokens.access_token) throw new Error('Google token exchange failed');
-
-        const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-          headers: { Authorization: `Bearer ${tokens.access_token}` }
-        });
-        const profile = await profileResponse.json();
-        if (!profileResponse.ok || !profile.email) throw new Error('Google profile lookup failed');
-
-        const account = groqService.findOrCreateGoogleAccount(profile.name, profile.email);
-        if (!account) throw new Error('Unable to create Google account');
-        const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'http://localhost:5500';
-        const redirectParams = new URLSearchParams({
-          authToken: `token_${account.userId}`,
-          userId: account.userId,
-          user: JSON.stringify({ id: account.userId, email: account.email, name: account.name })
-        });
-        res.redirect(`${frontendUrl}/index.html?${redirectParams}`);
-      } catch (error) {
-        console.error('Google authentication failed:', error.message);
-        res.status(502).send('Google sign-in failed. Please try again.');
-      }
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    groqConfigured: Boolean(groqService && groqService.groq),
+    clerkConfigured
   });
-
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', groqConfigured: Boolean(groqService && groqService.groq) });
 });
 
 async function emitSkillGapRecommendation(socket) {
@@ -181,12 +138,46 @@ async function emitSkillGapRecommendation(socket) {
   }
 }
 
+const clerkAuthorizedParties = process.env.CLERK_AUTHORIZED_PARTIES
+  ? process.env.CLERK_AUTHORIZED_PARTIES.split(',').map(party => party.trim()).filter(Boolean)
+  : [
+    `http://localhost:${process.env.PORT || 3000}`,
+    `http://127.0.0.1:${process.env.PORT || 3000}`
+  ];
+
+io.use(async (socket, next) => {
+  if (!clerkConfigured) {
+    next(new Error('Clerk authentication is not configured on this server.'));
+    return;
+  }
+
+  const token = socket.handshake.auth && socket.handshake.auth.token;
+  if (typeof token !== 'string' || !token) {
+    next(new Error('Sign in with Clerk to connect.'));
+    return;
+  }
+
+  try {
+    const claims = await verifyToken(token, {
+      ...(clerkJwtKey ? { jwtKey: clerkJwtKey } : { secretKey: process.env.CLERK_SECRET_KEY }),
+      authorizedParties: clerkAuthorizedParties
+    });
+    if (typeof claims.sub !== 'string' || !claims.sub) {
+      throw new Error('Clerk session token has no user ID.');
+    }
+
+    await loadClerkProfile(claims.sub);
+    socket.data.clerkUserId = claims.sub;
+    next();
+  } catch (error) {
+    console.warn(`Socket.IO Clerk authentication failed: ${error.message}`);
+    next(new Error('Clerk authentication failed. Please sign in again.'));
+  }
+});
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
-  const requestedUserId = socket.handshake.auth && socket.handshake.auth.userId;
-  socket.userId = typeof requestedUserId === 'string' && requestedUserId
-    ? requestedUserId
-    : socket.id;
+  socket.userId = socket.data.clerkUserId;
   socket.emit('userStats', groqService.getUserStats(socket.userId));
 
   socket.on('selectScenario', (data) => {

@@ -1,4 +1,5 @@
-const socket = io();
+let socket = null;
+let clerkInstance = null;
 let currentUser = null;
 let currentScenario = null;
 let pendingScenario = null;
@@ -20,32 +21,57 @@ const scenarioLabels = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  checkAuth();
-  if (localStorage.getItem('authToken')) {
-    router.navigate('dashboard');
-  }
+  initializeApp();
 });
 
-function checkAuth() {
-  const token = localStorage.getItem('authToken');
-  if (!token && !window.location.href.includes('login')) {
-    window.location.href = './login.html';
-  }
-  if (token) {
-    try {
-      currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    } catch (error) {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('currentUser');
-      window.location.href = './login.html';
+async function initializeApp() {
+  try {
+    clerkInstance = await window.clerkReady;
+    if (!clerkInstance || !clerkInstance.isSignedIn) {
+      window.location.replace('./login.html');
+      return;
+    }
+
+    const token = await clerkInstance.session.getToken();
+    const response = await fetch('/api/auth/session', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const session = await response.json();
+    if (!response.ok) throw new Error(session.error || 'Unable to verify your Clerk session.');
+    currentUser = session.user;
+
+    socket = io({
+      autoConnect: false,
+      auth: callback => {
+        clerkInstance.session.getToken()
+          .then(sessionToken => callback({ token: sessionToken }))
+          .catch(error => {
+            console.error('Unable to refresh Clerk session for Socket.IO:', error);
+            callback({ token: '' });
+          });
+      }
+    });
+    registerSocketListeners();
+    socket.connect();
+    router.navigate('dashboard');
+  } catch (error) {
+    console.error('Clerk app initialization failed:', error);
+    const mainContent = document.getElementById('main-content');
+    if (mainContent) {
+      mainContent.textContent = `Unable to verify your Clerk session: ${error.message}`;
     }
   }
 }
 
 function logout() {
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('currentUser');
-  window.location.href = './login.html';
+  if (!clerkInstance) {
+    window.location.replace('./login.html');
+    return;
+  }
+
+  clerkInstance.signOut()
+    .then(() => window.location.replace('./login.html'))
+    .catch(error => console.error('Clerk sign-out failed:', error));
 }
 
 function handleLogout() {
@@ -280,16 +306,21 @@ function appendMessage(message, sender) {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-socket.on('scenarioStarted', data => {
-  currentScenario = data.type;
-  appendMessage(data.intro, 'bot');
-});
-
-socket.on('aiResponse', data => appendMessage(data.message, 'bot'));
-socket.on('voiceAnalysis', data => {
-  const analysis = document.getElementById('voiceAnalysis');
-  if (!analysis) return;
-  analysis.textContent = `${data.feedback} ${data.duration}s • ${data.confidence}% confidence`;
-  updateVoiceStatus('Voice response sent.');
-});
-socket.on('error', message => console.error('Socket error:', message));
+function registerSocketListeners() {
+  socket.on('connect_error', error => {
+    console.error('Socket.IO connection failed:', error.message);
+    if (error.message.includes('Clerk')) window.location.replace('./login.html');
+  });
+  socket.on('scenarioStarted', data => {
+    currentScenario = data.type;
+    appendMessage(data.intro, 'bot');
+  });
+  socket.on('aiResponse', data => appendMessage(data.message, 'bot'));
+  socket.on('voiceAnalysis', data => {
+    const analysis = document.getElementById('voiceAnalysis');
+    if (!analysis) return;
+    analysis.textContent = `${data.feedback} ${data.duration}s • ${data.confidence}% confidence`;
+    updateVoiceStatus('Voice response sent.');
+  });
+  socket.on('error', message => console.error('Socket error:', message));
+}
