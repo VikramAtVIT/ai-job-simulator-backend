@@ -20,6 +20,13 @@ const clerkJwtKey = process.env.CLERK_JWT_KEY
 const clerkConfigured = Boolean(
   clerkPublishableKey && process.env.CLERK_SECRET_KEY
 );
+const clerkAuthorizedParties = process.env.CLERK_AUTHORIZED_PARTIES
+  ? process.env.CLERK_AUTHORIZED_PARTIES.split(',').map(party => party.trim()).filter(Boolean)
+  : [
+    'https://ai-job-simulator-frontend.vercel.app',
+    `http://localhost:${process.env.PORT || 3000}`,
+    `http://127.0.0.1:${process.env.PORT || 3000}`
+  ];
 
 let groqService = null;
 
@@ -52,7 +59,9 @@ app.use((req, res, next) => {
 
   next();
 });
-if (clerkConfigured) app.use(clerkMiddleware());
+if (clerkConfigured) {
+  app.use(clerkMiddleware({ authorizedParties: clerkAuthorizedParties }));
+}
 app.use('/pages', express.static(path.join(__dirname, 'pages')));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -137,14 +146,6 @@ async function emitSkillGapRecommendation(socket) {
     }
   }
 }
-
-const clerkAuthorizedParties = process.env.CLERK_AUTHORIZED_PARTIES
-  ? process.env.CLERK_AUTHORIZED_PARTIES.split(',').map(party => party.trim()).filter(Boolean)
-  : [
-    'https://ai-job-simulator-frontend.vercel.app',
-    `http://localhost:${process.env.PORT || 3000}`,
-    `http://127.0.0.1:${process.env.PORT || 3000}`
-  ];
 
 io.use(async (socket, next) => {
   if (!clerkConfigured) {
