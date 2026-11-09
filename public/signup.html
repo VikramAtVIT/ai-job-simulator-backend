@@ -1,120 +1,68 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign Up - AI Job Simulator</title>
-    <link rel="stylesheet" href="styles.css">
-    <style>
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .signup-container {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            width: 100%;
-            max-width: 400px;
-        }
-        .signup-container h1 {
-            text-align: center;
-            color: #333;
-            margin-bottom: 30px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            color: #555;
-            font-weight: 500;
-        }
-        .form-group input {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-size: 16px;
-            box-sizing: border-box;
-        }
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 5px rgba(102, 126, 234, 0.3);
-        }
-        .btn-signup {
-            width: 100%;
-            padding: 12px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 5px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            margin-top: 10px;
-        }
-        .btn-signup:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        .login-link {
-            text-align: center;
-            margin-top: 20px;
-            color: #666;
-        }
-        .login-link a {
-            color: #667eea;
-            text-decoration: none;
-            font-weight: 600;
-        }
-        .error-message {
-            color: #e74c3c;
-            text-align: center;
-            margin-bottom: 20px;
-            display: none;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080b1b">
+  <title>Create Account | AI Job Simulator</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body class="auth-page">
-    <div class="signup-container auth-card">
-        <h1>Join AI Job Simulator</h1>
-        <div id="clerk-sign-up"></div>
-        <p id="auth-status" class="login-link" role="status">Loading sign-up options...</p>
-        <div class="login-link">
-            Already have an account? <a href="login.html">Login</a>
+  <main class="auth-shell">
+    <section class="auth-brand" aria-label="AI Job Simulator">
+      <a class="auth-brand-mark" href="/" aria-label="AI Job Simulator home">
+        <span class="auth-brand-icon" aria-hidden="true">A</span>
+        <span>AI Job Simulator</span>
+      </a>
+      <div class="auth-brand-copy">
+        <span class="eyebrow">Your growth starts here</span>
+        <h1>Make your next big moment feel familiar.</h1>
+        <p>Build practical skills in a safe space before the real conversations happen.</p>
+        <div class="auth-benefits" aria-label="What you can do">
+          <div><span aria-hidden="true">01</span> Choose from hands-on scenarios</div>
+          <div><span aria-hidden="true">02</span> Learn from evidence-based feedback</div>
+          <div><span aria-hidden="true">03</span> See your skills take shape</div>
         </div>
-    </div>
+      </div>
+      <p class="auth-brand-footnote">Start where you are. Improve one conversation at a time.</p>
+    </section>
 
-    <script src="./clerk-auth.js"></script>
-    <script>
-        const authStatus = document.getElementById('auth-status');
-        window.clerkReady.then(clerk => {
-            if (!clerk) {
-                authStatus.textContent = 'Clerk is not configured. Add the Clerk API keys to the backend environment, then restart the server.';
-                return;
-            }
-            if (clerk.isSignedIn) {
-                window.location.replace('./index.html');
-                return;
-            }
-            clerk.mountSignUp(document.getElementById('clerk-sign-up'), {
-                forceRedirectUrl: '/index.html',
-                fallbackRedirectUrl: '/index.html'
-            });
-            authStatus.textContent = '';
-        }).catch(error => {
-            console.error('Clerk sign-up could not be loaded:', error);
-            authStatus.textContent = error.message;
-        });
-    </script>
+    <section class="auth-panel" aria-label="Create your account">
+      <div class="auth-card">
+        <div class="auth-card-heading">
+          <span class="eyebrow">Get started</span>
+          <h2>Create your account</h2>
+          <p>Sign up to start practicing today.</p>
+        </div>
+        <div id="clerk-sign-up"></div>
+        <p id="auth-status" class="auth-status" role="status" aria-live="polite">Loading sign-up options...</p>
+      </div>
+      <p class="auth-security-note"><span aria-hidden="true">✓</span> Secure sign-up powered by Clerk</p>
+    </section>
+  </main>
+
+  <script src="./clerk-auth.js"></script>
+  <script>
+    const authStatus = document.getElementById('auth-status');
+    window.clerkReady.then(clerk => {
+      if (!clerk) {
+        authStatus.textContent = 'Clerk is not configured. Add the Clerk API keys to the backend environment, then restart the server.';
+        return;
+      }
+      if (clerk.isSignedIn) {
+        window.location.replace('./index.html');
+        return;
+      }
+      clerk.mountSignUp(document.getElementById('clerk-sign-up'), {
+        forceRedirectUrl: '/index.html',
+        fallbackRedirectUrl: '/index.html',
+        appearance: window.clerkAppearance
+      });
+      authStatus.textContent = '';
+    }).catch(error => {
+      console.error('Clerk sign-up could not be loaded:', error);
+      authStatus.textContent = error.message;
+    });
+  </script>
 </body>
 </html>
